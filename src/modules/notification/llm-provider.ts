@@ -86,7 +86,7 @@ function buildContext(input: MessageGenerationInput): string {
   const { notificationType, task, dream, checkpoint, progress, timeOfDay } = input;
   let context = `Time of Day: ${timeOfDay || 'Day'}\n`;
 
-  if (notificationType === 'REMINDER' && task) {
+  if ((notificationType === 'REMINDER' || notificationType === 'PROGRESS_CHECK') && task) {
     context += `Task: "${task.title}"\n`;
     if (checkpoint) {
       context += `Focus for today: "${checkpoint.title}"\n`;
@@ -144,6 +144,7 @@ function getDefaultMessage(notificationType: NotificationType): string {
     REMINDER: 'Time to check in on your task!',
     MOTIVATIONAL: 'Keep going!',
     SYSTEM: 'New notification',
+    PROGRESS_CHECK: 'How is your progress today?',
   };
 
   return defaults[notificationType] || 'Check your DreamPlanner';
