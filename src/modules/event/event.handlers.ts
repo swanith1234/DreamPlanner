@@ -19,6 +19,9 @@ export class EventHandlers {
       case 'dream.completed':
         await this.handleDreamCompleted(event);
         break;
+      case 'task.progress_updated':
+        await this.handleTaskProgressUpdated(event);
+        break;
       default:
         await logger.warn('event', `Unknown event type: ${event.eventType}`);
     }
@@ -75,7 +78,7 @@ export class EventHandlers {
             message: 'Task reminder: Time to work on your task!',
             type: 'REMINDER',
           };
-          
+
           await notificationService.createNotification(
             userId,
             dreamId,
@@ -213,6 +216,34 @@ export class EventHandlers {
       await logger.error('event', 'Failed to handle dream.completed', {
         error: error.message,
         dreamId,
+      });
+    }
+  }
+
+  /**
+   * Handle task.progress_updated event
+   * Log progress and potentially send motivational notification
+   */
+  private async handleTaskProgressUpdated(event: DomainEvent): Promise<void> {
+    const { taskId, userId, progress } = event.payload as {
+      taskId: string;
+      userId: string;
+      progress: number;
+    };
+
+    try {
+      await logger.info('event', 'Task progress updated', {
+        taskId,
+        userId,
+        progress,
+      });
+
+      // Could add logic here to send motivational message if progress jumps significantly
+      // For now, just logging is enough to suppress warning and track activity.
+    } catch (error: any) {
+      await logger.error('event', 'Failed to handle task.progress_updated', {
+        error: error.message,
+        taskId,
       });
     }
   }

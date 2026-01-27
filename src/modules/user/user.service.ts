@@ -7,7 +7,7 @@ export class UserService {
             const preferences = await prisma.userPreference.upsert({
                 where: { userId },
                 update: {
-                    motivationTone: data.motivationTone,
+                    motivationTone: (data.motivationTone === 'FRIENDLY' ? 'POSITIVE' : data.motivationTone),
                     notificationFrequency: parseInt(data.notificationFrequency),
                     sleepStart: data.sleepStart,
                     sleepEnd: data.sleepEnd,
@@ -15,7 +15,7 @@ export class UserService {
                 },
                 create: {
                     userId,
-                    motivationTone: data.motivationTone || 'NEUTRAL',
+                    motivationTone: (data.motivationTone === 'FRIENDLY' ? 'POSITIVE' : (data.motivationTone || 'NEUTRAL')),
                     notificationFrequency: parseInt(data.notificationFrequency) || 60,
                     sleepStart: data.sleepStart || '23:00',
                     sleepEnd: data.sleepEnd || '07:00',
