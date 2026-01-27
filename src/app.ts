@@ -15,6 +15,7 @@ export function createApp(): Express {
   app.use(express.json());
   app.use(requestLogger);
   const allowedOrigins = [
+    'https://dream-planner-one.vercel.app/',
     'http://localhost:8080',
     'https://your-frontend-domain.com'
   ];
