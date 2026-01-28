@@ -74,6 +74,7 @@ model User {
   timezone     String  @default("UTC")
 
   preferences       UserPreference?
+  refreshTokens     RefreshToken[]
   dreams            Dream[]
   tasks             Task[]
   notifications     Notification[]
@@ -101,6 +102,24 @@ model UserPreference {
   user User @relation(fields: [userId], references: [id])
 
   createdAt DateTime @default(now())
+
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  
+  token     String   @unique
+  deviceInfo String? // Browser/OS info
+  lastActiveAt DateTime @default(now())
+  
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revoked   Boolean  @default(false)
+  replacedByToken String? // For rotation tracking
+  
+  @@index([userId])
 }
 
 ///////////////////////

@@ -2,6 +2,7 @@
 import { NotificationType, Notification, User } from '@prisma/client';
 import { emailProvider } from './providers/email.provider';
 import { logger } from '../../utils/logger';
+import { notificationWS } from './websocket.server';
 
 export interface NotificationData {
   notification: Notification;
@@ -34,11 +35,8 @@ export class NotificationDispatcher {
       //   errors.push(`Web Push: ${webResult.error}`);
       // }
 
-      // App Notification (stub)
-      // const appResult = await this.dispatchAppNotification(data);
-      // if (!appResult.success && appResult.error) {
-      //   errors.push(`App: ${appResult.error}`);
-      // }
+      // Real-Time WebSocket Notification
+      await this.dispatchRealTime(data);
 
       return {
         success: errors.length === 0,
@@ -107,6 +105,30 @@ export class NotificationDispatcher {
     // TODO: Implement web push
     // Options: Firebase, OneSignal, Expo, etc.
     return { success: true };
+  }
+
+  /**
+   * Dispatch via WebSocket (Real-Time)
+   */
+  private async dispatchRealTime(data: NotificationData): Promise<void> {
+    try {
+      const { notification, user } = data;
+
+      // Broadcast to user's connected clients
+      notificationWS.sendToUser(user.id, {
+        type: 'NOTIFICATION_NEW',
+        notification: {
+          ...notification,
+          // Ensure date strings are sent as strings
+          scheduledAt: notification.scheduledAt.toISOString(),
+          createdAt: notification.createdAt.toISOString()
+        }
+      });
+
+    } catch (error) {
+      // Logging only, don't block other dispatchers
+      console.error('WebSocket dispatch failed', error);
+    }
   }
 
   /**

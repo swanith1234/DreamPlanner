@@ -8,16 +8,20 @@ import taskRoutes from './modules/task/task.route';
 import notificationRoutes from './modules/notification/notification.route';
 import userRoutes from './modules/user/user.route';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
+
 export function createApp(): Express {
   const app = express();
 
   // Middleware
   app.use(express.json());
+  app.use(cookieParser());
   app.use(requestLogger);
   const allowedOrigins = [
     'https://dream-planner-frontend.vercel.app',
     'https://dream-planner-one.vercel.app',
     'http://localhost:8080',
+    'http://localhost:5173', // Vite local
     'https://your-frontend-domain.com'
   ];
 

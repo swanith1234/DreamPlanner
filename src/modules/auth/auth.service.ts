@@ -2,7 +2,8 @@ import prisma from '../../config/database';
 import {
   hashPassword,
   verifyPassword,
-  generateToken,
+  generateTokens,
+  hashToken,
 } from './auth.utils';
 import { logger } from '../../utils/logger';
 import {
@@ -11,7 +12,7 @@ import {
   ValidationError,
 } from '../../utils/errors';
 import { validateEmail, validatePassword } from '../../utils/validators';
-import { SignupRequest, LoginRequest, AuthResponse } from './auth.dto';
+import { SignupRequest, LoginRequest, AuthResponse, RefreshRequest } from './auth.dto';
 import { MotivationTone } from '@prisma/client';
 
 export class AuthService {
@@ -59,7 +60,12 @@ export class AuthService {
       include: { preferences: true },
     });
 
-    const token = generateToken(user.id, user.email);
+    const { accessToken, refreshToken } = generateTokens(user.id, user.email);
+    await this.addRefreshTokenToWhitelist({
+      userId: user.id,
+      refreshToken,
+      userAgent: input.userAgent
+    });
 
     await logger.info('auth', 'User signed up', { userId: user.id, email });
 
@@ -70,7 +76,8 @@ export class AuthService {
         name: user.name,
         timezone: user.timezone,
       },
-      token,
+      accessToken,
+      refreshToken,
     };
   }
 
@@ -87,7 +94,12 @@ export class AuthService {
       throw new AuthError('Invalid credentials');
     }
 
-    const token = generateToken(user.id, user.email);
+    const { accessToken, refreshToken } = generateTokens(user.id, user.email);
+    await this.addRefreshTokenToWhitelist({
+      userId: user.id,
+      refreshToken,
+      userAgent: input.userAgent || 'Unknown'
+    });
 
     await logger.info('auth', 'User logged in', { userId: user.id });
 
@@ -98,8 +110,65 @@ export class AuthService {
         name: user.name,
         timezone: user.timezone,
       },
-      token,
+      accessToken,
+      refreshToken,
     };
+  }
+
+  async refreshToken(input: RefreshRequest): Promise<{ accessToken: string; refreshToken: string }> {
+    const { refreshToken } = input;
+    const hashedToken = hashToken(refreshToken);
+
+    const savedToken = await prisma.refreshToken.findUnique({
+      where: { token: hashedToken },
+      include: { user: true }
+    });
+
+    if (!savedToken || savedToken.revoked || new Date() > savedToken.expiresAt) {
+      throw new AuthError('Invalid refresh token');
+    }
+
+    // Token Rotation: Delete consumed token
+    await prisma.refreshToken.update({
+      where: { id: savedToken.id },
+      data: { revoked: true }
+    });
+
+    // Generate new pair
+    const { accessToken, refreshToken: newRefreshToken } = generateTokens(savedToken.user.id, savedToken.user.email);
+
+    await this.addRefreshTokenToWhitelist({
+      userId: savedToken.user.id,
+      refreshToken: newRefreshToken,
+      userAgent: input.userAgent || savedToken.deviceInfo || 'Unknown'
+    });
+
+    return { accessToken, refreshToken: newRefreshToken };
+  }
+
+  async logout(refreshToken: string) {
+    const hashedToken = hashToken(refreshToken);
+    await prisma.refreshToken.update({
+      where: { token: hashedToken },
+      data: { revoked: true }
+    });
+  }
+
+  // Helper
+  private async addRefreshTokenToWhitelist({ userId, refreshToken, userAgent }: { userId: string, refreshToken: string, userAgent?: string }) {
+    const hashedToken = hashToken(refreshToken);
+    // Expires in 7 days
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    await prisma.refreshToken.create({
+      data: {
+        token: hashedToken,
+        userId,
+        expiresAt,
+        deviceInfo: userAgent
+      }
+    });
   }
 }
 

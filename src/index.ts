@@ -7,6 +7,7 @@ import { initializeNotificationQueue, closeNotificationQueue } from './modules/n
 import { notificationQueueWorker } from './modules/notification/queue-worker';
 import { emailProvider } from './modules/notification/providers/email.provider';
 import { disconnectRedis } from './config/queue';
+import { notificationWS } from './modules/notification/websocket.server';
 
 const app = createApp();
 
@@ -33,13 +34,18 @@ async function start() {
     await logger.info('server', 'Event worker started');
 
     // Start HTTP server
-    app.listen(env.server.port, () => {
+    const server = app.listen(env.server.port, () => {
       console.log(`🚀 Server running on http://localhost:${env.server.port}`);
       console.log(`📊 Database: Connected`);
       console.log(`🔔 BullMQ: Running (Queue-based notifications)`);
       console.log(`⚡ Event Worker: Running (Domain events)`);
       console.log(`📧 Email Provider: ${env.email.provider}`);
     });
+
+    // Initialize WebSocket Server
+    notificationWS.initialize(server);
+    console.log(`🔌 WebSocket: Listening on /ws`);
+
   } catch (error: any) {
     await logger.error('server', 'Failed to start server', {
       error: error.message,
@@ -51,35 +57,35 @@ async function start() {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   await logger.info('server', 'SIGTERM received, shutting down gracefully');
-  
+
   // Stop workers
   await eventWorker.stop();
   await notificationQueueWorker.stop();
-  
+
   // Close queue and Redis
   await closeNotificationQueue();
   await disconnectRedis();
-  
+
   // Disconnect database
   await prisma.$disconnect();
-  
+
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   await logger.info('server', 'SIGINT received, shutting down gracefully');
-  
+
   // Stop workers
   await eventWorker.stop();
   await notificationQueueWorker.stop();
-  
+
   // Close queue and Redis
   await closeNotificationQueue();
   await disconnectRedis();
-  
+
   // Disconnect database
   await prisma.$disconnect();
-  
+
   process.exit(0);
 });
 

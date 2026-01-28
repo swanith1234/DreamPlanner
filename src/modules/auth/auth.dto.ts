@@ -3,11 +3,18 @@ export interface SignupRequest {
   email: string;
   password: string;
   timezone?: string;
+  userAgent?: string;
 }
 
 export interface LoginRequest {
   email: string;
   password: string;
+  userAgent?: string;
+}
+
+export interface RefreshRequest {
+  refreshToken: string;
+  userAgent?: string;
 }
 
 export interface AuthResponse {
@@ -17,5 +24,6 @@ export interface AuthResponse {
     name: string | null;
     timezone: string;
   };
-  token: string;
+  accessToken: string;
+  refreshToken: string;
 }
