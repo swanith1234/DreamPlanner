@@ -7,7 +7,7 @@ import {
   ConfirmDreamRequest,
 } from './dream.dto';
 import { NotFoundError, ValidationError } from '../../utils/errors';
-import { DreamStatus } from '@prisma/client';
+import { DreamStatus, TaskStatus, NotificationStatus } from '@prisma/client';
 import { eventService } from '../event/event.service';
 
 export class DreamService {
@@ -40,15 +40,39 @@ export class DreamService {
   }
 
   async archiveDream(dreamId: string, userId: string): Promise<any> {
-    const dream = await this.getDream(dreamId, userId);
+    // Verify ownership
+    await this.getDream(dreamId, userId);
 
-    const updated = await prisma.dream.update({
-      where: { id: dreamId },
-      data: { status: DreamStatus.ARCHIVED },
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Archive the Dream
+      const updatedDream = await tx.dream.update({
+        where: { id: dreamId },
+        data: { status: DreamStatus.ARCHIVED },
+      });
+
+      // 2. Archive all associated Tasks
+      await tx.task.updateMany({
+        where: { dreamId },
+        data: { status: TaskStatus.ARCHIVED },
+      });
+
+      // 3. Archive/Cancel all PENDING notifications for this dream or its tasks
+      await tx.notification.updateMany({
+        where: {
+          OR: [
+            { dreamId },
+            { task: { dreamId } } // Notifications linked to tasks of this dream
+          ],
+          status: { in: [NotificationStatus.SCHEDULED, NotificationStatus.PROCESSING] }
+        },
+        data: { status: NotificationStatus.ARCHIVED },
+      });
+
+      return updatedDream;
     });
 
-    await logger.info('dream', 'Dream archived', { dreamId }, userId);
-    return updated;
+    await logger.info('dream', 'Dream and related entities archived', { dreamId }, userId);
+    return result;
   }
 
   async createDraft(
@@ -188,11 +212,17 @@ export class DreamService {
   }
 
   async listDreams(userId: string, status?: string): Promise<any[]> {
+    const whereClause: any = { userId };
+
+    if (status) {
+      whereClause.status = status as DreamStatus;
+    } else {
+      // Default behavior: Exclude ARCHIVED dreams
+      whereClause.status = { not: DreamStatus.ARCHIVED };
+    }
+
     return prisma.dream.findMany({
-      where: {
-        userId,
-        ...(status && { status: status as DreamStatus }),
-      },
+      where: whereClause,
       include: { checkpoints: true },
       orderBy: { createdAt: 'desc' },
     });
