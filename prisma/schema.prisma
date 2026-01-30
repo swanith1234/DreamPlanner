@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 ///////////////////////
@@ -80,6 +81,7 @@ model User {
   notifications     Notification[]
   logs              AppLog[]
   events            UserEvent[]
+  pushSubscriptions PushSubscription[]
   insightSnapshots  UserInsightSnapshot[]
   generatedInsights GeneratedInsight[]
 
@@ -119,6 +121,21 @@ model RefreshToken {
   revoked   Boolean  @default(false)
   replacedByToken String? // For rotation tracking
   
+  @@index([userId])
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  
+  userAgent String?
+  createdAt DateTime @default(now())
+
   @@index([userId])
 }
 

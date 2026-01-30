@@ -6,6 +6,7 @@ import { User, Task, NotificationStatus } from '@prisma/client';
 
 
 import { eventService } from '../event/event.service';
+import { pushService } from './push.service';
 
 export class NotificationService {
   /**
@@ -42,6 +43,17 @@ export class NotificationService {
         },
         userId
       );
+
+      // Trigger Push Notification (Fire and Forget)
+      pushService.sendPushNotification(userId, {
+        title: 'DreamPlanner',
+        body: notification.message,
+        icon: '/pwa-192x192.png', // We'll need to ensure this exists in public or handle in SW
+        data: {
+          url: `/app/tasks/${taskId || ''}`, // Deep link
+          notificationId: created.id
+        }
+      }).catch(err => logger.error('notification', 'Push failed', { error: err.message }));
 
       return created;
     } catch (error: any) {

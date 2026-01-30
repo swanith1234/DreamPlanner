@@ -38,6 +38,7 @@
     "prisma": "^6.19.1",
     "process": "^0.11.10",
     "uuid": "^13.0.0",
+    "web-push": "^3.6.7",
     "ws": "^8.19.0"
   },
   "devDependencies": {
@@ -47,6 +48,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.0.3",
     "@types/nodemailer": "^7.0.5",
+    "@types/web-push": "^3.6.4",
     "nodemon": "^3.1.11",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
