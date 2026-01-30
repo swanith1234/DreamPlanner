@@ -5,7 +5,7 @@ import { pushController } from './push.controller';
 import { authMiddleware } from '../../middleware/auth';
 import { runNotificationCron } from './notification.cron';
 const router = Router();
-// router.use(authMiddleware);
+router.use(authMiddleware);
 
 router.get('/', (req: Request, res: Response, next: NextFunction) => {
   notificationController.list(req, res).catch(next);
