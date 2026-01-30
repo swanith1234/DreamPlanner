@@ -39,6 +39,46 @@ export class PushController {
         }
     }
 
+    async unsubscribe(req: Request, res: Response) {
+        try {
+            const { endpoint } = req.body;
+            if (!endpoint) {
+                return res.status(400).json({ error: 'Endpoint required' });
+            }
+
+            await prisma.pushSubscription.delete({
+                where: { endpoint }
+            });
+
+            await logger.info('notification', 'Push subscription removed', {}, req.body?.endpoint);
+            res.json({ success: true });
+        } catch (error: any) {
+            // If record not found, it's already unsubscribed, so success
+            if (error.code === 'P2025') {
+                return res.json({ success: true });
+            }
+            await logger.error('notification', 'Failed to unsubscribe push', { error: error.message });
+            res.status(500).json({ error: error.message });
+        }
+    }
+
+    async checkSubscription(req: Request, res: Response) {
+        try {
+            const { endpoint } = req.body;
+            if (!endpoint) {
+                return res.json({ subscribed: false });
+            }
+
+            const subscription = await prisma.pushSubscription.findUnique({
+                where: { endpoint }
+            });
+
+            res.json({ subscribed: !!subscription });
+        } catch (error: any) {
+            res.status(500).json({ error: error.message });
+        }
+    }
+
     async getVapidKey(req: Request, res: Response) {
         // Return public key so frontend can use it
         res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });

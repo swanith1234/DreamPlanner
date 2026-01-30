@@ -15,6 +15,14 @@ router.post('/subscribe', (req, res, next) => {
   pushController.subscribe(req, res).catch(next);
 });
 
+router.post('/unsubscribe', (req, res, next) => {
+  pushController.unsubscribe(req, res).catch(next);
+});
+
+router.post('/check-subscription', (req, res, next) => {
+  pushController.checkSubscription(req, res).catch(next);
+});
+
 router.get('/vapid-key', (req, res, next) => {
   pushController.getVapidKey(req, res).catch(next);
 });
