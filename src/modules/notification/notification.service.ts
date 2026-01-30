@@ -130,11 +130,27 @@ export class NotificationService {
       }
 
       // Check if task is still active
-      if (task.status === 'COMPLETED' || task.status === 'BLOCKED') {
+      if (task.status === 'COMPLETED' || task.status === 'BLOCKED' || task.status === 'ARCHIVED') {
         await logger.info(
           'notification',
-          'Task not active, skipping next reminder',
+          'Task not active (completed/blocked/archived), skipping next reminder',
           { taskId, status: task.status },
+          userId
+        );
+        return;
+      }
+
+      // Check if parent dream is active
+      const dream = await prisma.dream.findUnique({
+        where: { id: dreamId },
+        select: { status: true }
+      });
+
+      if (dream?.status === 'ARCHIVED' || dream?.status === 'COMPLETED' || dream?.status === 'FAILED') {
+        await logger.info(
+          'notification',
+          'Parent dream not active, skipping next reminder',
+          { taskId, dreamStatus: dream.status },
           userId
         );
         return;
@@ -240,6 +256,22 @@ export class NotificationService {
       where: {
         status: NotificationStatus.SCHEDULED,
         scheduledAt: { lte: new Date() },
+        // Double safety: Ensure we don't pick up notifications for archived parents
+        // if they weren't cancelled properly for some reason
+        AND: [
+          {
+            OR: [
+              { dream: { status: { not: 'ARCHIVED' } } },
+              { dreamId: null } // System notifications might not have dream
+            ]
+          },
+          {
+            OR: [
+              { task: { status: { not: 'ARCHIVED' } } },
+              { taskId: null }
+            ]
+          }
+        ]
       },
       orderBy: { scheduledAt: 'asc' },
       take: limit,
