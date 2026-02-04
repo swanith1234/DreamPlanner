@@ -32,8 +32,8 @@ router.put('/:taskId/checkpoints/:checkpointId', (req: Request, res: Response, n
   taskController.updateCheckpoint(req, res).catch(next);
 });
 
-router.post('/:taskId/checkpoints/:checkpointId/toggle', (req: Request, res: Response, next: NextFunction) => {
-  taskController.toggleCheckpoint(req, res).catch(next);
+router.post('/:taskId/checkpoints/:checkpointId/progress', (req: Request, res: Response, next: NextFunction) => {
+  taskController.updateCheckpointProgress(req, res).catch(next);
 });
 
 router.post('/:taskId/block', (req: Request, res: Response, next: NextFunction) => {

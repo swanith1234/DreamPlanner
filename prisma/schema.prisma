@@ -222,6 +222,7 @@ model TaskCheckpoint {
   targetDate   DateTime        // day this applies to
   orderIndex   Int
   isCompleted  Boolean @default(false)
+  progress     Int     @default(0) // 0-100
   isUserEdited Boolean @default(false)
 
   task Task @relation(fields: [taskId], references: [id])

@@ -260,18 +260,23 @@ export class TaskService {
     });
   }
 
-  async toggleCheckpoint(
+  async updateCheckpointProgress(
     taskId: string,
     checkpointId: string,
     userId: string,
-    isCompleted: boolean
+    progress: number
   ): Promise<any> {
     const task = await this.getTask(taskId, userId); // Verifies ownership
+
+    const isCompleted = progress === 100;
 
     // 1. Update the triggered checkpoint
     await prisma.taskCheckpoint.update({
       where: { id: checkpointId },
-      data: { isCompleted },
+      data: {
+        progress,
+        isCompleted
+      },
     });
 
     // 2. Fetch all checkpoints to calculate new progress
@@ -279,21 +284,19 @@ export class TaskService {
     const totalCheckpoints = updatedTask.checkpoints.length;
 
     if (totalCheckpoints > 0) {
-      const completedCount = updatedTask.checkpoints.filter((cp: any) => cp.isCompleted).length;
-      const newProgress = Math.round((completedCount / totalCheckpoints) * 100);
+      // Calculate average progress of all checkpoints
+      const totalProgressSum = updatedTask.checkpoints.reduce(
+        (sum: number, cp: any) => sum + (cp.progress || (cp.isCompleted ? 100 : 0)),
+        0
+      );
+
+      const newProgress = Math.round(totalProgressSum / totalCheckpoints);
 
       // 3. Update task progress
       // Reuse updateProgress to handle event logging and timestamp updates
       await this.updateProgress(taskId, userId, newProgress);
 
-      return updatedTask; // Return the Task (with new progress), or the Checkpoint? 
-      // Plan didn't specify return type change, but calling updateProgress probably returns task.
-      // Let's return the checkpoint to match original signature type or return updated task data?
-      // Original returned checkpoint update result.
-      // Frontend expects checkpoint update result mostly, but if we change it here...
-      // Let's stick to returning the updated checkpoint but we want to ensure sidebar/UI updates.
-      // Actually, since we updated the task, we might want to trigger a refresh. 
-      // But for this function, let's just do the work.
+      return updatedTask;
     }
 
     return prisma.taskCheckpoint.findUnique({ where: { id: checkpointId } });

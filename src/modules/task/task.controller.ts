@@ -86,15 +86,20 @@ export class TaskController {
     }
   }
 
-  async toggleCheckpoint(req: AuthRequest, res: Response) {
+  async updateCheckpointProgress(req: AuthRequest, res: Response) {
     try {
       const { taskId, checkpointId } = req.params;
-      const { isCompleted } = req.body;
-      const result = await taskService.toggleCheckpoint(
+      const { progress } = req.body;
+
+      if (typeof progress !== 'number' || progress < 0 || progress > 100) {
+        throw new Error('Invalid progress value');
+      }
+
+      const result = await taskService.updateCheckpointProgress(
         taskId,
         checkpointId,
         req.userId!,
-        isCompleted
+        progress
       );
       res.status(200).json(result);
     } catch (error: any) {
