@@ -1,0 +1,220 @@
+[dotenv@17.2.3] injecting env (0) from .env -- tip: 🔑 add access controls to secrets: https://dotenvx.com/ops
+--- Starting Analytics Verification ---
+Using existing test user: a5f2afed-321a-4a4d-a07c-5a0e9482df7c
+Cleared previous week data.
+Created dummy events.
+Created dummy task with checkpoints.
+Generating Weekly Snapshot...
+prisma:error 
+Invalid `prisma.userInsightSnapshot.upsert()` invocation in
+/Users/swanithpidugu/swanith/DreamPlanner/backend/src/modules/analytics/analytics.service.ts:133:63
+
+  130 
+  131 
+  132 // 3. Upsert Snapshot
+→ 133 const snapshot = await prisma.userInsightSnapshot.upsert({
+        where: {
+          userId_dreamId_weekStart: {
+            userId: "a5f2afed-321a-4a4d-a07c-5a0e9482df7c",
+            weekStart: new Date("2026-02-01T18:30:00.000Z"),
+      +     dreamId: String
+          }
+        },
+        update: {
+          activeDays: 3,
+          disciplineScore: 50,
+          consistencyScore: 43,
+          totalCheckpointsPlanned: 4,
+          totalCheckpointsCompleted: 2,
+          lateCheckpoints: 0,
+          earlyStarts: 0,
+          overachievementDays: 0,
+          dailyEffort: {
+            Mon: 0,
+            Tue: 0,
+            Wed: 0,
+            Thu: 0,
+            Fri: 0,
+            Sat: 0,
+            Sun: 0
+          },
+          updatedAt: new Date("2026-02-08T06:12:03.895Z")
+        },
+        create: {
+          userId: "a5f2afed-321a-4a4d-a07c-5a0e9482df7c",
+          dreamId: null,
+          weekStart: new Date("2026-02-01T18:30:00.000Z"),
+          weekEnd: new Date("2026-02-08T18:29:59.999Z"),
+          activeDays: 3,
+          missedDays: 4,
+          longestStreak: 0,
+          currentStreak: 0,
+          totalCheckpointsPlanned: 4,
+          totalCheckpointsCompleted: 2,
+          lateCheckpoints: 0,
+          earlyStarts: 0,
+          overachievementDays: 0,
+          avgDailyProgress: 0,
+          avgProgressLatencyHours: 0,
+          dailyEffort: {
+            Mon: 0,
+            Tue: 0,
+            Wed: 0,
+            Thu: 0,
+            Fri: 0,
+            Sat: 0,
+            Sun: 0
+          },
+          dailyStatus: {},
+          disciplineScore: 50,
+          consistencyScore: 43
+        }
+      })
+
+Argument `dreamId` must not be null.
+[ERROR] [analytics] Failed to generate weekly snapshot {
+  userId: 'a5f2afed-321a-4a4d-a07c-5a0e9482df7c',
+  error: '\n' +
+    'Invalid `prisma.userInsightSnapshot.upsert()` invocation in\n' +
+    '/Users/swanithpidugu/swanith/DreamPlanner/backend/src/modules/analytics/analytics.service.ts:133:63\n' +
+    '\n' +
+    '  130 \n' +
+    '  131 \n' +
+    '  132 // 3. Upsert Snapshot\n' +
+    '→ 133 const snapshot = await prisma.userInsightSnapshot.upsert({\n' +
+    '        where: {\n' +
+    '          userId_dreamId_weekStart: {\n' +
+    '            userId: "a5f2afed-321a-4a4d-a07c-5a0e9482df7c",\n' +
+    '            weekStart: new Date("2026-02-01T18:30:00.000Z"),\n' +
+    '      +     dreamId: String\n' +
+    '          }\n' +
+    '        },\n' +
+    '        update: {\n' +
+    '          activeDays: 3,\n' +
+    '          disciplineScore: 50,\n' +
+    '          consistencyScore: 43,\n' +
+    '          totalCheckpointsPlanned: 4,\n' +
+    '          totalCheckpointsCompleted: 2,\n' +
+    '          lateCheckpoints: 0,\n' +
+    '          earlyStarts: 0,\n' +
+    '          overachievementDays: 0,\n' +
+    '          dailyEffort: {\n' +
+    '            Mon: 0,\n' +
+    '            Tue: 0,\n' +
+    '            Wed: 0,\n' +
+    '            Thu: 0,\n' +
+    '            Fri: 0,\n' +
+    '            Sat: 0,\n' +
+    '            Sun: 0\n' +
+    '          },\n' +
+    '          updatedAt: new Date("2026-02-08T06:12:03.895Z")\n' +
+    '        },\n' +
+    '        create: {\n' +
+    '          userId: "a5f2afed-321a-4a4d-a07c-5a0e9482df7c",\n' +
+    '          dreamId: null,\n' +
+    '          weekStart: new Date("2026-02-01T18:30:00.000Z"),\n' +
+    '          weekEnd: new Date("2026-02-08T18:29:59.999Z"),\n' +
+    '          activeDays: 3,\n' +
+    '          missedDays: 4,\n' +
+    '          longestStreak: 0,\n' +
+    '          currentStreak: 0,\n' +
+    '          totalCheckpointsPlanned: 4,\n' +
+    '          totalCheckpointsCompleted: 2,\n' +
+    '          lateCheckpoints: 0,\n' +
+    '          earlyStarts: 0,\n' +
+    '          overachievementDays: 0,\n' +
+    '          avgDailyProgress: 0,\n' +
+    '          avgProgressLatencyHours: 0,\n' +
+    '          dailyEffort: {\n' +
+    '            Mon: 0,\n' +
+    '            Tue: 0,\n' +
+    '            Wed: 0,\n' +
+    '            Thu: 0,\n' +
+    '            Fri: 0,\n' +
+    '            Sat: 0,\n' +
+    '            Sun: 0\n' +
+    '          },\n' +
+    '          dailyStatus: {},\n' +
+    '          disciplineScore: 50,\n' +
+    '          consistencyScore: 43\n' +
+    '        }\n' +
+    '      })\n' +
+    '\n' +
+    'Argument `dreamId` must not be null.'
+}
+PrismaClientValidationError: 
+Invalid `prisma.userInsightSnapshot.upsert()` invocation in
+/Users/swanithpidugu/swanith/DreamPlanner/backend/src/modules/analytics/analytics.service.ts:133:63
+
+  130 
+  131 
+  132 // 3. Upsert Snapshot
+→ 133 const snapshot = await prisma.userInsightSnapshot.upsert({
+        where: {
+          userId_dreamId_weekStart: {
+            userId: "a5f2afed-321a-4a4d-a07c-5a0e9482df7c",
+            weekStart: new Date("2026-02-01T18:30:00.000Z"),
+      +     dreamId: String
+          }
+        },
+        update: {
+          activeDays: 3,
+          disciplineScore: 50,
+          consistencyScore: 43,
+          totalCheckpointsPlanned: 4,
+          totalCheckpointsCompleted: 2,
+          lateCheckpoints: 0,
+          earlyStarts: 0,
+          overachievementDays: 0,
+          dailyEffort: {
+            Mon: 0,
+            Tue: 0,
+            Wed: 0,
+            Thu: 0,
+            Fri: 0,
+            Sat: 0,
+            Sun: 0
+          },
+          updatedAt: new Date("2026-02-08T06:12:03.895Z")
+        },
+        create: {
+          userId: "a5f2afed-321a-4a4d-a07c-5a0e9482df7c",
+          dreamId: null,
+          weekStart: new Date("2026-02-01T18:30:00.000Z"),
+          weekEnd: new Date("2026-02-08T18:29:59.999Z"),
+          activeDays: 3,
+          missedDays: 4,
+          longestStreak: 0,
+          currentStreak: 0,
+          totalCheckpointsPlanned: 4,
+          totalCheckpointsCompleted: 2,
+          lateCheckpoints: 0,
+          earlyStarts: 0,
+          overachievementDays: 0,
+          avgDailyProgress: 0,
+          avgProgressLatencyHours: 0,
+          dailyEffort: {
+            Mon: 0,
+            Tue: 0,
+            Wed: 0,
+            Thu: 0,
+            Fri: 0,
+            Sat: 0,
+            Sun: 0
+          },
+          dailyStatus: {},
+          disciplineScore: 50,
+          consistencyScore: 43
+        }
+      })
+
+Argument `dreamId` must not be null.
+    at throwValidationException (/Users/swanithpidugu/swanith/DreamPlanner/backend/node_modules/@prisma/client/src/runtime/core/errorRendering/throwValidationException.ts:45:9)
+    at ei.handleRequestError (/Users/swanithpidugu/swanith/DreamPlanner/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:202:7)
+    at ei.handleAndLogRequestError (/Users/swanithpidugu/swanith/DreamPlanner/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:174:12)
+    at ei.request (/Users/swanithpidugu/swanith/DreamPlanner/backend/node_modules/@prisma/client/src/runtime/RequestHandler.ts:143:12)
+    at async a (/Users/swanithpidugu/swanith/DreamPlanner/backend/node_modules/@prisma/client/src/runtime/getPrismaClient.ts:833:24)
+    at async AnalyticsService.generateWeeklySnapshot (/Users/swanithpidugu/swanith/DreamPlanner/backend/src/modules/analytics/analytics.service.ts:133:30)
+    at async main (/Users/swanithpidugu/swanith/DreamPlanner/backend/src/scripts/verify-analytics.ts:102:5) {
+  clientVersion: '6.19.1'
+}

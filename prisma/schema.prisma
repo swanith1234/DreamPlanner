@@ -214,6 +214,29 @@ model Task {
 // TASK CHECKPOINT (PHASE-1 CORE)
 ///////////////////////
 
+enum CheckpointStatus {
+  NOT_STARTED      // targetDate > today
+  ACTIVE           // targetDate == today
+  DUE              // targetDate < today && not completed
+  COMPLETED
+  EARLY_STARTED    // progress before targetDate
+}
+
+enum UserEventType {
+  TASK_CREATED
+  CHECKPOINT_STARTED
+  CHECKPOINT_PROGRESS_UPDATED
+  CHECKPOINT_COMPLETED
+  TASK_COMPLETED
+  NOTIFICATION_RECEIVED
+  NOTIFICATION_CLICKED
+  DAY_WITH_NO_ACTIVITY
+}
+
+///////////////////////
+// TASK CHECKPOINT (PHASE-1 CORE)
+///////////////////////
+
 model TaskCheckpoint {
   id     String @id @default(uuid())
   taskId String
@@ -222,8 +245,11 @@ model TaskCheckpoint {
   targetDate   DateTime        // day this applies to
   orderIndex   Int
   isCompleted  Boolean @default(false)
-  progress     Int     @default(0) // 0-100
+  progress     Int     @default(0) // 0-100 (can exceed 100)
+  status       CheckpointStatus @default(NOT_STARTED)
+  
   isUserEdited Boolean @default(false)
+  startedEarly Boolean @default(false)
 
   task Task @relation(fields: [taskId], references: [id])
 
@@ -242,6 +268,27 @@ model DomainEvent {
   processedAt       DateTime? // ✅ idempotency & reliability
   generatedInsights GeneratedInsight[]
   createdAt         DateTime           @default(now())
+}
+
+///////////////////////
+// APPLICATION LOGS (MOVED EVENTS HERE TO KEEP TOGETHER)
+///////////////////////
+
+model UserEvent {
+  id         String @id @default(uuid())
+  userId     String
+
+  entityType String   // TASK | CHECKPOINT | NOTIFICATION
+  entityId   String
+
+  eventType  UserEventType
+  metadata   Json?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
 }
 
 ///////////////////////
@@ -289,62 +336,81 @@ model AppLog {
   createdAt DateTime @default(now())
 }
 
-model UserEvent {
-  id     String @id @default(uuid())
-  userId String
 
-  entityType String // DREAM | TASK | NOTIFICATION
-  entityId   String
 
-  eventType String // TASK_PROGRESS_UPDATED, DEADLINE_CHANGED, NOTIF_CLICKED
-  metadata  Json?
-
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id])
-
-  @@index([userId, createdAt])
-  @@index([entityType, entityId])
-}
 
 model UserInsightSnapshot {
-  id      String  @id @default(uuid())
-  userId  String
-  dreamId String?
+  id       String @id @default(uuid())
+  userId   String
+  dreamId  String?
 
-  avoidanceScore       Int @default(0) // 0–100
-  procrastinationScore Int @default(0)
-  motivationDecayScore Int @default(0)
+  weekStart DateTime
+  weekEnd   DateTime
 
-  responseLatencyAvgSec Int?
-  preferredTone         MotivationTone?
+  // Activity
+  activeDays        Int
+  missedDays        Int
+  longestStreak     Int
+  currentStreak     Int
 
-  lastComputedAt DateTime
-  version        Int      @default(1)
+  // Execution
+  totalCheckpointsPlanned    Int
+  totalCheckpointsCompleted Int
+  lateCheckpoints           Int
+  earlyStarts               Int
+  overachievementDays       Int
+
+  // Effort
+  avgDailyProgress        Float
+  avgProgressLatencyHours Float
+
+  // Visualization payloads
+  dailyEffort Json    // { Mon: 120, Tue: 80, ... }
+  dailyStatus Json    // { Mon: "HIGH", Tue: "LOW", ... }
+
+  // Scores
+  disciplineScore  Int  // 0–100
+  consistencyScore Int  // 0–100
+
+  finalizedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   user  User   @relation(fields: [userId], references: [id])
   dream Dream? @relation(fields: [dreamId], references: [id])
 
-  @@unique([userId, dreamId])
+  @@unique([userId, dreamId, weekStart])
 }
 
 model GeneratedInsight {
-  id      String  @id @default(uuid())
-  userId  String
-  dreamId String?
-  taskId  String?
+  id        String @id @default(uuid())
+  userId    String
+  dreamId   String?
+  weekStart DateTime // Added to link to specific week
 
-  insightType String // TASK_AVOIDANCE_HIGH, DREAM_RESTART_LOOP
-  evidence    Json // factual proof
+  insightType InsightType
+  evidence   Json
 
   createdAt DateTime @default(now())
-  consumed  Boolean  @default(false)
+  consumed  Boolean @default(false)
 
   user          User         @relation(fields: [userId], references: [id])
   dream         Dream?       @relation(fields: [dreamId], references: [id])
-  task          Task?        @relation(fields: [taskId], references: [id])
-  domainEvent   DomainEvent? @relation(fields: [domainEventId], references: [id])
-  domainEventId String?
+  
+  // Removed relations specific to Phase 1 that are no longer mentioned in the new spec or can be inferred
+  // If we need to keep backward compatibility we might keep them optional, 
+  // but strictly following the prompt "Modify usage as follows":
+  // The prompt definition didn't show the relations, but Prisma requires relations for fields like userId/dreamId if they map to models.
+  // I will keep the relations that exist for data integrity but align fields to the prompt.
+  
+  // Note: The prompt's GeneratedInsight definition didn't include taskId or domainEventId.
+  // I will make them optional or remove if not needed. 
+  // "stores LLM-generated explanations, not metrics"
+  
+  taskId          String?
+  task            Task?        @relation(fields: [taskId], references: [id])
+  domainEventId   String?
+  domainEvent     DomainEvent? @relation(fields: [domainEventId], references: [id])
 
   @@index([userId, createdAt])
 }
@@ -360,4 +426,5 @@ enum InsightType {
   TASK_OVERLOAD
   DREAM_TASK_MISALIGNMENT
   USER_REFLECTION_TRIGGER
+  WEEKLY_VERDICT // Added for weekly summary
 }

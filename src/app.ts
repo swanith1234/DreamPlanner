@@ -7,6 +7,7 @@ import dreamRoutes from './modules/dream/dream.route';
 import taskRoutes from './modules/task/task.route';
 import notificationRoutes from './modules/notification/notification.route';
 import userRoutes from './modules/user/user.route';
+import analyticsRoutes from './modules/analytics/analytics.route';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 
@@ -44,9 +45,9 @@ export function createApp(): Express {
   app.use('/api/auth', authRoutes);
   app.use('/api/dreams', dreamRoutes);
   app.use('/api/tasks', taskRoutes);
-  app.use('/api/tasks', taskRoutes);
   app.use('/api/notifications', notificationRoutes);
   app.use('/api/users', userRoutes);
+  app.use('/api/analytics', analyticsRoutes);
 
   // Global error handler
   app.use(errorHandler);
