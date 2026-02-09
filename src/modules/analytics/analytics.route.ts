@@ -6,7 +6,7 @@ const router = Router();
 
 router.use(authMiddleware);
 
-router.get('/dashboard', analyticsController.getWeeklyDashboard);
-router.post('/generate', analyticsController.triggerGeneration); // For testing/demo
+router.get('/dashboard', (req, res) => analyticsController.getWeeklyDashboard(req, res));
+router.post('/generate', (req, res) => analyticsController.triggerGeneration(req, res)); // For testing/demo
 
 export default router;

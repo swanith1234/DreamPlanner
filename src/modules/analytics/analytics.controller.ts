@@ -74,18 +74,23 @@ export class AnalyticsController {
             // If snapshot is missing for current week, maybe generate it on the fly?
             // For Phase 2 Demo verify, I will generate it if missing.
 
-            if (!snapshot) {
-                // Optional: Generate on fly for current week if missing?
-                // Checking if it's current week
-                const currentWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-                if (weekStart.getTime() === currentWeekStart.getTime()) {
-                    await analyticsService.generateWeeklySnapshot(userId, new Date());
-                    // Fetch again
-                    const newSnapshot = await prisma.userInsightSnapshot.findUnique({
-                        where: { userId_dreamId_weekStart: { userId, dreamId: null, weekStart } as any }
-                    });
-                    return res.json({ snapshot: newSnapshot, insight: null });
-                }
+            // If snapshot is missing OR it's the current week, regenerate to ensure fresh stats
+            const currentWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+            const isCurrentWeek = weekStart.getTime() === currentWeekStart.getTime();
+
+            if (!snapshot || isCurrentWeek) {
+                await analyticsService.generateWeeklySnapshot(userId, isCurrentWeek ? new Date() : dateParam);
+
+                const newSnapshot = await prisma.userInsightSnapshot.findFirst({
+                    where: { userId, dreamId: null, weekStart }
+                });
+
+                const newInsight = await prisma.generatedInsight.findFirst({
+                    where: { userId, dreamId: null, weekStart },
+                    orderBy: { createdAt: 'desc' }
+                });
+
+                return res.json({ snapshot: newSnapshot, insight: newInsight });
             }
 
             res.json({ snapshot, insight });
