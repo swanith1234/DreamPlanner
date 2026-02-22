@@ -62,12 +62,18 @@ export class AnalyticsService {
     async computeDashboard(userId: string, date: Date = new Date()): Promise<SprintDashboard> {
         const { start: sprintStart, end: sprintEnd } = this.sprintBounds(date);
 
-        // ── 1. Fetch all planned checkpoints for the sprint ──────────────────────
-        // "Planned" = targetDate falls within this sprint window.
+        // "Planned" = targetDate calendar day falls within Mon–Sun of the sprint.
+        // We use gte sprintStart (Mon 00:00 local) and lt the day AFTER sprintEnd
+        // (i.e., next Monday 00:00) to avoid timezone edge-cases where Render UTC
+        // endOfWeek bleeds into the next IST day.
+        const dayAfterSprintEnd = new Date(sprintEnd);
+        dayAfterSprintEnd.setDate(dayAfterSprintEnd.getDate() + 1);
+        dayAfterSprintEnd.setHours(0, 0, 0, 0);
+
         const planned = await prisma.taskCheckpoint.findMany({
             where: {
                 task: { userId },
-                targetDate: { gte: sprintStart, lte: sprintEnd },
+                targetDate: { gte: sprintStart, lt: dayAfterSprintEnd },
             },
             orderBy: { orderIndex: 'asc' },
         });
@@ -121,19 +127,29 @@ export class AnalyticsService {
 
                 if (isEarly) {
                     earlyCompleted.push(cp);
-                } else if (cp.completedAt && cp.completedAt > endOfDay(cp.targetDate)) {
-                    // RECOVERED: completed, but after end-of-day of targetDate
-                    recovered.push(cp);
+                } else if (cp.completedAt) {
+                    // RECOVERED: completedAt calendar date is strictly after targetDate calendar date
+                    // Compare just the date portions (YYYY-MM-DD) to avoid timezone timestamp traps
+                    const completedDay = format(cp.completedAt, 'yyyy-MM-dd');
+                    const targetDay = format(cp.targetDate, 'yyyy-MM-dd');
+                    if (completedDay > targetDay) {
+                        recovered.push(cp);
+                    } else {
+                        onTimeCompleted.push(cp);
+                    }
                 } else {
-                    // ON_TIME: completed on or before end of targetDate
                     onTimeCompleted.push(cp);
                 }
             } else {
-                // Not completed
-                if (now > endOfDay(cp.targetDate)) {
+                // Not completed — only OVERDUE if the targetDate calendar day is
+                // strictly before today's calendar day (the day isn't done yet today)
+                const targetDay = format(cp.targetDate, 'yyyy-MM-dd');
+                const todayDay = format(now, 'yyyy-MM-dd');
+                if (targetDay < todayDay) {
                     overduePending.push(cp);
                 }
-                // else: in-progress / not yet due — not categorised separately in response
+                // targetDay === todayDay → in-progress, not yet overdue
+                // targetDay > todayDay  → future, not yet relevant
             }
         }
 
