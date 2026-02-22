@@ -22,25 +22,32 @@ export class NotificationDispatcher {
    */
   async dispatch(data: NotificationData): Promise<{ success: boolean; errors: string[] }> {
     const errors: string[] = [];
+    let anyChannelSucceeded = false;
 
     try {
-      // Email dispatch (currently implemented)
+      // ── Email (best-effort, never blocks delivery success) ────────────────────
       const emailResult = await this.dispatchEmail(data);
       if (!emailResult.success && emailResult.error) {
         errors.push(`Email: ${emailResult.error}`);
+        await logger.warn('dispatcher', 'Email channel failed', { error: emailResult.error, notificationId: data.notification.id });
       }
 
-      // Web Push
+      // ── Web Push ─────────────────────────────────────────────────────────────
       const webResult = await this.dispatchWebPush(data);
-      if (!webResult.success && webResult.error) {
-        errors.push(`Web Push: ${webResult.error}`);
+      if (webResult.success) {
+        anyChannelSucceeded = true;
+      } else if (webResult.error) {
+        errors.push(`WebPush: ${webResult.error}`);
       }
 
-      // Real-Time WebSocket Notification
+      // ── Real-Time WebSocket (in-memory, always attempt) ───────────────────────
       await this.dispatchRealTime(data);
+      anyChannelSucceeded = true; // WS send is fire-and-forget, always count as attempted
 
+      // Succeed if at least one delivery channel worked (WS or push).
+      // Email-only failure should NOT fail the job — email is supplementary.
       return {
-        success: errors.length === 0,
+        success: anyChannelSucceeded,
         errors,
       };
     } catch (error: any) {

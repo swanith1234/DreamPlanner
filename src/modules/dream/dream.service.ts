@@ -75,6 +75,63 @@ export class DreamService {
     return result;
   }
 
+  async deleteDream(dreamId: string, userId: string): Promise<void> {
+    // Verify ownership
+    await this.getDream(dreamId, userId);
+
+    await prisma.$transaction(async (tx) => {
+      // Gather all task IDs for this dream
+      const tasks = await tx.task.findMany({
+        where: { dreamId },
+        select: { id: true },
+      });
+      const taskIds = tasks.map(t => t.id);
+
+      // Gather all checkpoint IDs for those tasks
+      const checkpoints = await tx.taskCheckpoint.findMany({
+        where: { taskId: { in: taskIds } },
+        select: { id: true },
+      });
+      const checkpointIds = checkpoints.map(c => c.id);
+
+      // 1. Delete Day rows (reference TaskCheckpoints)
+      if (checkpointIds.length > 0) {
+        await tx.day.deleteMany({ where: { checkpointId: { in: checkpointIds } } });
+      }
+
+      // 2. Delete TaskCheckpoints
+      if (taskIds.length > 0) {
+        await tx.taskCheckpoint.deleteMany({ where: { taskId: { in: taskIds } } });
+      }
+
+      // 3. Delete Notifications linked to dream or its tasks
+      await tx.notification.deleteMany({
+        where: { OR: [{ dreamId }, { taskId: { in: taskIds } }] },
+      });
+
+      // 4. Delete GeneratedInsights linked to dream or its tasks
+      await tx.generatedInsight.deleteMany({
+        where: { OR: [{ dreamId }, { taskId: { in: taskIds } }] },
+      });
+
+      // 5. Delete UserInsightSnapshots linked to dream
+      await tx.userInsightSnapshot.deleteMany({ where: { dreamId } });
+
+      // 6. Delete Tasks
+      if (taskIds.length > 0) {
+        await tx.task.deleteMany({ where: { id: { in: taskIds } } });
+      }
+
+      // 7. Delete DreamCheckpoints
+      await tx.dreamCheckpoint.deleteMany({ where: { dreamId } });
+
+      // 8. Delete the Dream itself
+      await tx.dream.delete({ where: { id: dreamId } });
+    });
+
+    await logger.info('dream', 'Dream and all associated data permanently deleted', { dreamId }, userId);
+  }
+
   async createDraft(
     userId: string,
     input: CreateDreamRequest

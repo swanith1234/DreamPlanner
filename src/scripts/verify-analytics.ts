@@ -99,7 +99,7 @@ async function main() {
 
     // 5. Run Analytics
     console.log('Generating Weekly Snapshot...');
-    await analyticsService.generateWeeklySnapshot(user.id);
+    await analyticsService.finalizeWeeklySnapshot(user.id);
 
     // 6. Verify Result
     const snapshot = await prisma.userInsightSnapshot.findFirst({

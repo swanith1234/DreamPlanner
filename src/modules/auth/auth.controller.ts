@@ -6,16 +6,17 @@ import prisma from '../../config/database';
 
 export class AuthController {
   private setCookies(res: Response, accessToken: string, refreshToken: string) {
+    const isProduction = process.env.NODE_ENV === 'production';
     res.cookie('accessToken', accessToken, {
       httpOnly: true,
-      secure: true, // Required for SameSite: None
-      sameSite: 'none', // Required for cross-site (Vercel -> Render)
+      secure: isProduction,          // Secure only over HTTPS in prod
+      sameSite: isProduction ? 'none' : 'lax', // 'none' needed for cross-site (Vercel->Render), 'lax' works locally
       maxAge: 15 * 60 * 1000 // 15m
     });
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: true,
-      sameSite: 'none',
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000 // 7d
     });
   }
@@ -89,8 +90,10 @@ export class AuthController {
       res.status(200).json({ success: true });
     } catch (error: any) {
       // Clear cookies if refresh fails
-      res.clearCookie('accessToken');
-      res.clearCookie('refreshToken');
+      const isProduction = process.env.NODE_ENV === 'production';
+      const cookieOpts = { httpOnly: true, secure: isProduction, sameSite: isProduction ? 'none' as const : 'lax' as const };
+      res.clearCookie('accessToken', cookieOpts);
+      res.clearCookie('refreshToken', cookieOpts);
       res.status(401).json({ error: error.message });
     }
   }
@@ -101,8 +104,10 @@ export class AuthController {
       if (refreshToken) {
         await authService.logout(refreshToken);
       }
-      res.clearCookie('accessToken');
-      res.clearCookie('refreshToken');
+      const isProduction = process.env.NODE_ENV === 'production';
+      const cookieOpts = { httpOnly: true, secure: isProduction, sameSite: isProduction ? 'none' as const : 'lax' as const };
+      res.clearCookie('accessToken', cookieOpts);
+      res.clearCookie('refreshToken', cookieOpts);
       res.status(200).json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

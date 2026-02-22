@@ -13,7 +13,7 @@ router.post('/internal/cron/notifications', async (req, res) => {
   }
 
   // TODO: Implement notification cron functionality
-  const result = runNotificationCron();
+  const result = await runNotificationCron();
   res.json(result);
 });
 

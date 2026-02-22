@@ -44,17 +44,6 @@ export class NotificationService {
         userId
       );
 
-      // Trigger Push Notification (Fire and Forget)
-      pushService.sendPushNotification(userId, {
-        title: 'DreamPlanner',
-        body: notification.message,
-        icon: '/pwa-192x192.png', // We'll need to ensure this exists in public or handle in SW
-        data: {
-          url: `/app/tasks/${taskId || ''}`, // Deep link
-          notificationId: created.id
-        }
-      }).catch(err => logger.error('notification', 'Push failed', { error: err.message }));
-
       return created;
     } catch (error: any) {
       await logger.error('notification', 'Failed to create notification', {
@@ -386,13 +375,19 @@ export class NotificationService {
         // Actually, check if we Created a PROGRESS_CHECK notification today
         // Approximate by checking UTC time range for simplicity or just check last notification type.
 
+        // Did we already send a PROGRESS_CHECK today (in user's local calendar day)?
+        // Compute UTC equivalent of user's local midnight
+        const userMidnight = new Date(userTime);
+        userMidnight.setHours(0, 0, 0, 0);
+        // Convert back to UTC: subtract the timezone offset that toLocaleString applied
+        const offsetMs = userTime.getTime() - now.getTime(); // local time delta
+        const userMidnightUTC = new Date(userMidnight.getTime() - offsetMs);
+
         const existingPrompt = await prisma.notification.findFirst({
           where: {
             userId: user.id,
             type: 'PROGRESS_CHECK',
-            createdAt: { gte: new Date(Date.now() - 12 * 60 * 60 * 1000) }, // Roughly last 12-24 hrs?
-            // Better: gte Today's start in UTC? 
-            // Let's just use "created within last 18 hours" to cover "today".
+            createdAt: { gte: userMidnightUTC },
           },
         });
 

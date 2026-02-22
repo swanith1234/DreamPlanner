@@ -84,6 +84,7 @@ model User {
   pushSubscriptions PushSubscription[]
   insightSnapshots  UserInsightSnapshot[]
   generatedInsights GeneratedInsight[]
+  days Day[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -214,14 +215,6 @@ model Task {
 // TASK CHECKPOINT (PHASE-1 CORE)
 ///////////////////////
 
-enum CheckpointStatus {
-  NOT_STARTED      // targetDate > today
-  ACTIVE           // targetDate == today
-  DUE              // targetDate < today && not completed
-  COMPLETED
-  EARLY_STARTED    // progress before targetDate
-}
-
 enum UserEventType {
   TASK_CREATED
   CHECKPOINT_STARTED
@@ -238,20 +231,19 @@ enum UserEventType {
 ///////////////////////
 
 model TaskCheckpoint {
-  id     String @id @default(uuid())
-  taskId String
+  id          String   @id @default(uuid())
+  taskId      String
 
-  title        String          // "Finish Chapter 1"
-  targetDate   DateTime        // day this applies to
+  title        String
+  targetDate   DateTime
   orderIndex   Int
-  isCompleted  Boolean @default(false)
-  progress     Int     @default(0) // 0-100 (can exceed 100)
-  status       CheckpointStatus @default(NOT_STARTED)
-  
-  isUserEdited Boolean @default(false)
-  startedEarly Boolean @default(false)
+  isCompleted  Boolean   @default(false)
+  progress     Int       @default(0) // 0–100
+  completedAt  DateTime?
+  isUserEdited Boolean   @default(false)
 
-  task Task @relation(fields: [taskId], references: [id])
+  task Task  @relation(fields: [taskId], references: [id])
+  days Day[]
 
   createdAt DateTime @default(now())
 }
@@ -427,4 +419,19 @@ enum InsightType {
   DREAM_TASK_MISALIGNMENT
   USER_REFLECTION_TRIGGER
   WEEKLY_VERDICT // Added for weekly summary
+}
+
+model Day {
+  id                         String   @id @default(uuid())
+  userId                     String
+  checkpointId               String
+  date                       DateTime
+  effort                     Int      @default(0)
+  previousCheckpointProgress Int      @default(0)
+
+  user       User           @relation(fields: [userId], references: [id])
+  checkpoint TaskCheckpoint @relation(fields: [checkpointId], references: [id])
+
+  @@unique([userId, checkpointId, date])
+  @@index([userId, date])
 }

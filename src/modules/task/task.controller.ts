@@ -89,17 +89,19 @@ export class TaskController {
   async updateCheckpointProgress(req: AuthRequest, res: Response) {
     try {
       const { taskId, checkpointId } = req.params;
-      const { progress } = req.body;
+      const { delta, localDate } = req.body;
 
-      if (typeof progress !== 'number' || progress < 0 || progress > 100) {
-        throw new Error('Invalid progress value');
+      if (typeof delta !== 'number' || delta <= 0 || delta > 100) {
+        res.status(400).json({ error: 'Invalid delta: must be a positive number between 1 and 100' });
+        return;
       }
 
       const result = await taskService.updateCheckpointProgress(
         taskId,
         checkpointId,
         req.userId!,
-        progress
+        delta,
+        localDate  // YYYY-MM-DD string from the browser's local timezone
       );
       res.status(200).json(result);
     } catch (error: any) {

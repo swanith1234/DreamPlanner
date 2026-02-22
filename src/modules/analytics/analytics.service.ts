@@ -1,222 +1,311 @@
+/**
+ * ANALYTICS SERVICE — Clean, deterministic, sprint-scoped weekly engine.
+ *
+ * Facts stored  : TaskCheckpoint, Day, completedAt, targetDate, effort
+ * Meaning computed : EARLY / ON_TIME / RECOVERED / OVERDUE_PENDING
+ * Intelligence returned : rates, scores, activity map
+ *
+ * Live dashboard → computed on-demand, NOT from snapshot.
+ * Weekly cron    → stores finalized results in UserInsightSnapshot (Sunday).
+ */
+
 import prisma from '../../config/database';
 import { logger } from '../../utils/logger';
-import { UserInsightSnapshot, CheckpointStatus, UserEventType, MotivationTone, InsightType } from '@prisma/client';
-import { startOfWeek, endOfWeek, subWeeks, format } from 'date-fns';
+import { startOfWeek, endOfWeek, startOfDay, endOfDay, format } from 'date-fns';
+import { MotivationTone } from '@prisma/client';
 import { generateWeeklyInsight } from './analytics.llm';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SprintDashboard {
+    sprintWindow: { start: string; end: string };
+    checkpoints: {
+        planned: { count: number; items: any[] };
+        earlyCompleted: { count: number; items: any[] };
+        onTimeCompleted: { count: number; items: any[] };
+        recovered: { count: number; items: any[] };
+        overduePending: { count: number; items: any[] };
+    };
+    rates: {
+        executionRate: number;
+        recoveryRate: number;
+    };
+    activity: {
+        activeDays: number;
+        missedDays: number;
+        overachievementDays: number;
+        totalEffort: number;
+        dailyEffort: Record<string, number>;
+    };
+    scores: {
+        consistency: number;
+        intensity: number;
+        disciplineScore: number;
+    };
+}
 
 export class AnalyticsService {
 
-    /**
-     * Generates or updates the Weekly Insight Snapshot for a user.
-     * This is typically called by a Cron Job.
-     */
-    async generateWeeklySnapshot(userId: string, date: Date = new Date()): Promise<void> {
-        try {
-            const weekStart = startOfWeek(date, { weekStartsOn: 1 }); // Monday start
-            const weekEnd = endOfWeek(date, { weekStartsOn: 1 });
+    // ── Sprint window helpers ──────────────────────────────────────────────────
 
-            // 1. Fetch Data
-            const user = await prisma.user.findUnique({
-                where: { id: userId },
-                include: { preferences: true }
-            });
+    private sprintBounds(date: Date = new Date()) {
+        return {
+            start: startOfWeek(date, { weekStartsOn: 1 }),  // Monday 00:00
+            end: endOfWeek(date, { weekStartsOn: 1 }),     // Sunday 23:59:59
+        };
+    }
 
-            if (!user) {
-                throw new Error(`User not found: ${userId}`);
-            }
+    // ── Core: compute live weekly dashboard ───────────────────────────────────
 
-            const [userEvents, tasks, checkpoints] = await Promise.all([
-                prisma.userEvent.findMany({
-                    where: {
-                        userId,
-                        createdAt: { gte: weekStart, lte: weekEnd }
-                    }
-                }),
-                prisma.task.findMany({
-                    where: { userId, updatedAt: { gte: weekStart, lte: weekEnd } },
-                    include: { checkpoints: true }
-                }),
-                prisma.taskCheckpoint.findMany({
-                    where: {
-                        task: { userId },
-                        targetDate: { gte: weekStart, lte: weekEnd }
-                    }
-                })
-            ]);
+    async computeDashboard(userId: string, date: Date = new Date()): Promise<SprintDashboard> {
+        const { start: sprintStart, end: sprintEnd } = this.sprintBounds(date);
 
-            // 2. Calculate Metrics
+        // ── 1. Fetch all planned checkpoints for the sprint ──────────────────────
+        // "Planned" = targetDate falls within this sprint window.
+        const planned = await prisma.taskCheckpoint.findMany({
+            where: {
+                task: { userId },
+                targetDate: { gte: sprintStart, lte: sprintEnd },
+            },
+            orderBy: { orderIndex: 'asc' },
+        });
 
-            // Active Days (Consistency)
-            const relevantEventTypes: UserEventType[] = [
-                UserEventType.CHECKPOINT_STARTED,
-                UserEventType.CHECKPOINT_PROGRESS_UPDATED,
-                UserEventType.CHECKPOINT_COMPLETED,
-                UserEventType.TASK_COMPLETED
-            ];
+        // ── 2. Fetch ALL checkpoints for the user to support EARLY detection ──────
+        // EARLY check needs the next checkpoint's targetDate and its Day entries.
+        const allCheckpoints = await prisma.taskCheckpoint.findMany({
+            where: { task: { userId } },
+            orderBy: { orderIndex: 'asc' },
+        });
 
-            const activeDaysSet = new Set(
-                userEvents
-                    .filter(e => relevantEventTypes.includes(e.eventType))
-                    .map(e => format(e.createdAt, 'yyyy-MM-dd'))
-            );
-            const activeDays = activeDaysSet.size;
-
-            // Execution logic
-            const totalCheckpointsPlanned = checkpoints.length;
-            const totalCheckpointsCompleted = checkpoints.filter(cp => cp.isCompleted).length;
-
-            const lateCheckpoints = checkpoints.filter(cp =>
-                cp.isCompleted && cp.status === CheckpointStatus.DUE
-            ).length;
-
-            // Early Start logic
-            const earlyStarts = checkpoints.filter(cp => cp.startedEarly).length;
-
-            // Overachievement
-            const overachievementDays = new Set(
-                checkpoints.filter(cp => cp.progress > 100).map(cp => format(cp.targetDate, 'yyyy-MM-dd'))
-            ).size;
-
-
-            // Scores
-            // Consistency Score (0-100)
-            const consistencyScore = Math.min(Math.round((activeDays / 7) * 100), 100);
-
-            // Execution Rate (0-100)
-            const executionRate = totalCheckpointsPlanned > 0
-                ? Math.round((totalCheckpointsCompleted / totalCheckpointsPlanned) * 100)
-                : 0;
-
-            // Recovery Rate
-            // Simplified placeholder per plan explanation
-            const recoveryRate = 100;
-
-            // Early Bonus
-            // min((EarlyStarts + OverachievementEvents) / PlannedCheckpoints, 1) * 100
-            const earlyBonus = totalCheckpointsPlanned > 0
-                ? Math.min(Math.round(((earlyStarts + overachievementDays) / totalCheckpointsPlanned) * 100), 100)
-                : 0;
-
-            // Discipline Score
-            // 0.35 * Consistency + 0.30 * Execution + 0.20 * Recovery + 0.15 * EarlyBonus
-            const disciplineScore = Math.round(
-                (0.35 * consistencyScore) +
-                (0.30 * executionRate) +
-                (0.20 * recoveryRate) +
-                (0.15 * earlyBonus)
-            );
-
-            // Daily Effort Visualization
-            const dailyEffort: Record<string, number> = {};
-            const dailyStatus: Record<string, string> = {};
-
-            // Initialize days
-            for (let i = 0; i < 7; i++) {
-                const d = new Date(weekStart);
-                d.setDate(d.getDate() + i);
-                const key = format(d, 'eee'); // Mon, Tue...
-                dailyEffort[key] = 0;
-                // Simple logic for effort: sum of progress of checkpoints targeted for that day?
-                // Or sum of progress updates happened that day?
-                // "Height = % effort for the day".
-                // Let's sum progress of checkpoints targeted for that day.
-                // Or better, sum of 'UserEvent.CHECKPOINT_PROGRESS_UPDATED' logic?
-                // Prompt says: "Daily Effort Json { Mon: 120 ... }".
-                // Let's iterate checkpoints and add their progress to their targetDate day.
-                const dayCheckpoints = checkpoints.filter(cp => format(cp.targetDate, 'eee') === key);
-                const totalProgress = dayCheckpoints.reduce((sum, cp) => {
-                    let p = cp.progress;
-                    if (p === 0 && cp.isCompleted) p = 100;
-                    return sum + p;
-                }, 0);
-                dailyEffort[key] = totalProgress; // Total % output.
-            }
-
-
-            // 3. Upsert Snapshot (Manual check to handle dreamId: null unique constraint issue)
-            const existingSnapshot = await prisma.userInsightSnapshot.findFirst({
-                where: {
-                    userId,
-                    weekStart,
-                    dreamId: null
-                }
-            });
-
-            const updateData = {
-                activeDays,
-                disciplineScore,
-                consistencyScore,
-                totalCheckpointsPlanned,
-                totalCheckpointsCompleted,
-                lateCheckpoints,
-                earlyStarts,
-                overachievementDays,
-                dailyEffort,
-                updatedAt: new Date()
-            };
-
-            const createData = {
+        // Build a map of checkpointId → Day[] for this sprint (for EARLY detection)
+        const dayRecords = await prisma.day.findMany({
+            where: {
                 userId,
-                dreamId: null,
-                weekStart,
-                weekEnd,
+                date: { gte: sprintStart, lte: sprintEnd },
+            },
+        });
+
+        // daysByCheckpoint: checkpointId → Day[]
+        const daysByCheckpoint = new Map<string, typeof dayRecords>();
+        for (const d of dayRecords) {
+            const arr = daysByCheckpoint.get(d.checkpointId) ?? [];
+            arr.push(d);
+            daysByCheckpoint.set(d.checkpointId, arr);
+        }
+
+        const now = new Date();
+
+        // ── 3. Categorise each planned checkpoint ────────────────────────────────
+
+        const earlyCompleted: any[] = [];
+        const onTimeCompleted: any[] = [];
+        const recovered: any[] = [];
+        const overduePending: any[] = [];
+
+        for (const cp of planned) {
+            if (cp.isCompleted) {
+                // Find next checkpoint (higher orderIndex, same task)
+                const nextCp = allCheckpoints.find(
+                    c => c.taskId === cp.taskId && c.orderIndex > cp.orderIndex
+                );
+
+                // EARLY_COMPLETED: next CP exists AND there's a Day record for it
+                // with date < startOfDay(nextCp.targetDate)
+                let isEarly = false;
+                if (nextCp) {
+                    const nextDays = daysByCheckpoint.get(nextCp.id) ?? [];
+                    isEarly = nextDays.some(d => d.date < startOfDay(nextCp.targetDate));
+                }
+
+                if (isEarly) {
+                    earlyCompleted.push(cp);
+                } else if (cp.completedAt && cp.completedAt > endOfDay(cp.targetDate)) {
+                    // RECOVERED: completed, but after end-of-day of targetDate
+                    recovered.push(cp);
+                } else {
+                    // ON_TIME: completed on or before end of targetDate
+                    onTimeCompleted.push(cp);
+                }
+            } else {
+                // Not completed
+                if (now > endOfDay(cp.targetDate)) {
+                    overduePending.push(cp);
+                }
+                // else: in-progress / not yet due — not categorised separately in response
+            }
+        }
+
+        // ── 4. Rates ─────────────────────────────────────────────────────────────
+
+        const totalCompleted = earlyCompleted.length + onTimeCompleted.length + recovered.length;
+        const totalPlanned = planned.length;
+
+        const executionRate = totalPlanned === 0
+            ? 100
+            : Math.round((totalCompleted / totalPlanned) * 100);
+
+        const totalOverdue = overduePending.length + recovered.length;
+        const recoveryRate = totalOverdue === 0
+            ? 100
+            : Math.round((recovered.length / totalOverdue) * 100);
+
+        // ── 5. Daily effort & active days ────────────────────────────────────────
+        // Initialize all 7 sprint days to 0 (ISO date keys: YYYY-MM-DD)
+        const TOTAL_SPRINT_DAYS = 7;
+        const dailyEffort: Record<string, number> = {};
+        for (let i = 0; i < TOTAL_SPRINT_DAYS; i++) {
+            const d = new Date(sprintStart);
+            d.setDate(d.getDate() + i);
+            dailyEffort[format(d, 'yyyy-MM-dd')] = 0;
+        }
+
+        // Accumulate Day records (one row per user/checkpoint/day) into the map
+        let totalEffort = 0;
+        for (const d of dayRecords) {
+            const key = format(d.date, 'yyyy-MM-dd');
+            if (key in dailyEffort) {
+                dailyEffort[key] += d.effort;
+            }
+            totalEffort += d.effort;
+        }
+
+        const activeDays = Object.values(dailyEffort).filter(e => e > 0).length;
+        const missedDays = TOTAL_SPRINT_DAYS - activeDays;
+
+        // ── 6. Overachievement days ─────────────────────────────────────────────
+        const avgEffort = activeDays > 0 ? totalEffort / activeDays : 0;
+        const overachievementDays = Object.values(dailyEffort).filter(e => e > avgEffort).length;
+
+        // ── 7. Scores ────────────────────────────────────────────────────────────
+
+        const consistency = Math.min(Math.round((activeDays / TOTAL_SPRINT_DAYS) * 100), 100);
+
+        const avgEffortPerActiveDay = activeDays > 0 ? totalEffort / activeDays : 0;
+        const intensity = Math.min(Math.round(avgEffortPerActiveDay), 100);
+
+        const disciplineScore = Math.round(
+            (consistency * 0.25) +
+            (executionRate * 0.25) +
+            (recoveryRate * 0.25) +
+            (intensity * 0.25)
+        );
+
+        // ── 8. Build response ───────────────────────────────────────────────────
+
+        return {
+            sprintWindow: {
+                start: format(sprintStart, 'yyyy-MM-dd'),
+                end: format(sprintEnd, 'yyyy-MM-dd'),
+            },
+            checkpoints: {
+                planned: { count: totalPlanned, items: planned },
+                earlyCompleted: { count: earlyCompleted.length, items: earlyCompleted },
+                onTimeCompleted: { count: onTimeCompleted.length, items: onTimeCompleted },
+                recovered: { count: recovered.length, items: recovered },
+                overduePending: { count: overduePending.length, items: overduePending },
+            },
+            rates: { executionRate, recoveryRate },
+            activity: {
                 activeDays,
-                missedDays: 7 - activeDays,
-                longestStreak: 0,
-                currentStreak: 0,
-                totalCheckpointsPlanned,
-                totalCheckpointsCompleted,
-                lateCheckpoints,
-                earlyStarts,
+                missedDays,
                 overachievementDays,
-                avgDailyProgress: 0,
-                avgProgressLatencyHours: 0,
+                totalEffort,
                 dailyEffort,
-                dailyStatus: {},
+            },
+            scores: { consistency, intensity, disciplineScore },
+        };
+    }
+
+    // ── Weekly cron: finalize & store snapshot (Sunday 23:59) ─────────────────
+    // Called ONLY by cron. Live dashboard must call computeDashboard() directly.
+
+    async finalizeWeeklySnapshot(userId: string, date: Date = new Date()): Promise<void> {
+        try {
+            const dashboard = await this.computeDashboard(userId, date);
+            const { start: weekStart, end: weekEnd } = this.sprintBounds(date);
+
+            const {
+                checkpoints: { planned, earlyCompleted, onTimeCompleted, recovered, overduePending },
+                rates: { executionRate, recoveryRate },
+                activity: { activeDays, totalEffort, dailyEffort },
+                scores: { disciplineScore, consistency: consistencyScore },
+            } = dashboard;
+
+            const totalCompleted = earlyCompleted.count + onTimeCompleted.count + recovered.count;
+            const lateCheckpoints = recovered.count + overduePending.count;
+            const earlyStarts = earlyCompleted.count;
+
+            const updatePayload = {
+                activeDays,
                 disciplineScore,
                 consistencyScore,
+                totalCheckpointsPlanned: planned.count,
+                totalCheckpointsCompleted: totalCompleted,
+                lateCheckpoints,
+                earlyStarts,
+                overachievementDays: dashboard.activity.overachievementDays,
+                dailyEffort,
+                updatedAt: new Date(),
             };
+
+            const existing = await prisma.userInsightSnapshot.findFirst({
+                where: { userId, dreamId: null, weekStart },
+            });
 
             let snapshot;
-            if (existingSnapshot) {
+            if (existing) {
                 snapshot = await prisma.userInsightSnapshot.update({
-                    where: { id: existingSnapshot.id },
-                    data: updateData
+                    where: { id: existing.id },
+                    data: updatePayload,
                 });
             } else {
                 snapshot = await prisma.userInsightSnapshot.create({
-                    data: createData
+                    data: {
+                        userId,
+                        dreamId: null,
+                        weekStart,
+                        weekEnd,
+                        missedDays: 7 - activeDays,
+                        longestStreak: 0,
+                        currentStreak: 0,
+                        avgDailyProgress: 0,
+                        avgProgressLatencyHours: 0,
+                        dailyStatus: {},
+                        ...updatePayload,
+                    },
                 });
             }
 
-            // 4. Generate AI Insight
-            const insight = await generateWeeklyInsight({
-                userName: user.name || 'User',
-                tone: user.preferences?.motivationTone || MotivationTone.NEUTRAL,
-                snapshot,
+            // Generate AI insight for this finalized week
+            const user = await prisma.user.findUnique({
+                where: { id: userId },
+                include: { preferences: true },
             });
 
-            await prisma.generatedInsight.create({
-                data: {
-                    userId,
-                    dreamId: null,
-                    weekStart,
-                    insightType: insight.insightType,
-                    evidence: {
-                        ...insight.evidence,
-                        narrative: insight.message // Store the text in evidence or a separate field? 
-                        // Schema: `evidence Json`.
-                        // The dashboard needs "Paragraph written by AI".
-                        // GeneratedInsight doesn't have a `message` field? 
-                        // Phase 1 schema had `message` in Notification, but here GeneratedInsight has `insightType` and `evidence`.
-                        // I should store the narrative IN `evidence` JSON.
+            if (user) {
+                const insight = await generateWeeklyInsight({
+                    userName: user.name || 'User',
+                    tone: user.preferences?.motivationTone ?? MotivationTone.NEUTRAL,
+                    snapshot,
+                });
+
+                await prisma.generatedInsight.create({
+                    data: {
+                        userId,
+                        dreamId: null,
+                        weekStart,
+                        insightType: insight.insightType,
+                        evidence: { ...insight.evidence, narrative: insight.message },
+                        consumed: false,
                     },
-                    consumed: false // New unread insight
-                }
-            });
+                });
+            }
 
+            await logger.info('analytics', 'Weekly snapshot finalized', { userId, weekStart });
         } catch (error: any) {
-            logger.error('analytics', `Failed to generate weekly snapshot`, { userId, error: error.message });
+            logger.error('analytics', 'Failed to finalize weekly snapshot', { userId, error: error.message });
             throw error;
         }
     }
