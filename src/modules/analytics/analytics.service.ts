@@ -11,7 +11,8 @@
 
 import prisma from '../../config/database';
 import { logger } from '../../utils/logger';
-import { startOfWeek, endOfWeek, startOfDay, endOfDay, format } from 'date-fns';
+import { startOfWeek, endOfWeek, startOfDay, format } from 'date-fns';
+import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 import { MotivationTone } from '@prisma/client';
 import { generateWeeklyInsight } from './analytics.llm';
 
@@ -60,22 +61,47 @@ export class AnalyticsService {
     // ── Core: compute live weekly dashboard ───────────────────────────────────
 
     async computeDashboard(userId: string, date: Date = new Date()): Promise<SprintDashboard> {
-        const { start: sprintStart, end: sprintEnd } = this.sprintBounds(date);
+        // ── 0. User timezone ──────────────────────────────────────────────────────
+        const userRecord = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { timezone: true },
+        });
+        const tz = userRecord?.timezone || 'Asia/Kolkata'; // fall back to IST if not set
 
-        // "Planned" = targetDate calendar day falls within Mon–Sun of the sprint.
-        // We use gte sprintStart (Mon 00:00 local) and lt the day AFTER sprintEnd
-        // (i.e., next Monday 00:00) to avoid timezone edge-cases where Render UTC
-        // endOfWeek bleeds into the next IST day.
-        const dayAfterSprintEnd = new Date(sprintEnd);
-        dayAfterSprintEnd.setDate(dayAfterSprintEnd.getDate() + 1);
-        dayAfterSprintEnd.setHours(0, 0, 0, 0);
+        // Helper: convert any UTC Date to a YYYY-MM-DD string in the user's TZ
+        const toLocalDate = (d: Date) => formatInTimeZone(d, tz, 'yyyy-MM-dd');
 
-        const planned = await prisma.taskCheckpoint.findMany({
+        // "Today" in user's local timezone
+        const todayLocal = toLocalDate(date);
+
+        // ── Sprint window in user's timezone ──────────────────────────────────────
+        // Convert "now" to the user's local midnight, then compute Mon/Sun of that week
+        const nowInUserTZ = toZonedTime(date, tz);
+        const { start: sprintStart, end: sprintEnd } = this.sprintBounds(nowInUserTZ);
+
+        // Sprint YYYY-MM-DD strings in user's TZ (used to label the window)
+        const sprintStartStr = toLocalDate(sprintStart);
+        const sprintEndStr = toLocalDate(sprintEnd);
+
+        // For the DB query: pad 1 day on each side to catch any UTC-vs-TZ edge cases;
+        // we'll filter the in-sprint checkpoints in JS using the user's timezone.
+        const queryStart = new Date(sprintStart); queryStart.setDate(queryStart.getDate() - 1);
+        const queryEnd = new Date(sprintEnd); queryEnd.setDate(queryEnd.getDate() + 1);
+
+        // ── 1. Fetch checkpoints near the sprint and filter in JS by user TZ ─────
+        const allPlannedRaw = await prisma.taskCheckpoint.findMany({
             where: {
                 task: { userId },
-                targetDate: { gte: sprintStart, lt: dayAfterSprintEnd },
+                targetDate: { gte: queryStart, lte: queryEnd },
             },
             orderBy: { orderIndex: 'asc' },
+        });
+
+        // Keep only checkpoints whose targetDate calendar-day (in user's TZ)
+        // falls within [sprintStartStr, sprintEndStr]
+        const planned = allPlannedRaw.filter(cp => {
+            const d = toLocalDate(cp.targetDate);
+            return d >= sprintStartStr && d <= sprintEndStr;
         });
 
         // ── 2. Fetch ALL checkpoints for the user to support EARLY detection ──────
@@ -89,7 +115,7 @@ export class AnalyticsService {
         const dayRecords = await prisma.day.findMany({
             where: {
                 userId,
-                date: { gte: sprintStart, lte: sprintEnd },
+                date: { gte: queryStart, lte: queryEnd },
             },
         });
 
@@ -101,7 +127,7 @@ export class AnalyticsService {
             daysByCheckpoint.set(d.checkpointId, arr);
         }
 
-        const now = new Date();
+        const now = date;
 
         // ── 3. Categorise each planned checkpoint ────────────────────────────────
 
@@ -128,10 +154,9 @@ export class AnalyticsService {
                 if (isEarly) {
                     earlyCompleted.push(cp);
                 } else if (cp.completedAt) {
-                    // RECOVERED: completedAt calendar date is strictly after targetDate calendar date
-                    // Compare just the date portions (YYYY-MM-DD) to avoid timezone timestamp traps
-                    const completedDay = format(cp.completedAt, 'yyyy-MM-dd');
-                    const targetDay = format(cp.targetDate, 'yyyy-MM-dd');
+                    // RECOVERED: completedAt calendar date (user TZ) is after targetDate calendar date (user TZ)
+                    const completedDay = toLocalDate(cp.completedAt);
+                    const targetDay = toLocalDate(cp.targetDate);
                     if (completedDay > targetDay) {
                         recovered.push(cp);
                     } else {
@@ -141,15 +166,13 @@ export class AnalyticsService {
                     onTimeCompleted.push(cp);
                 }
             } else {
-                // Not completed — only OVERDUE if the targetDate calendar day is
-                // strictly before today's calendar day (the day isn't done yet today)
-                const targetDay = format(cp.targetDate, 'yyyy-MM-dd');
-                const todayDay = format(now, 'yyyy-MM-dd');
-                if (targetDay < todayDay) {
+                // OVERDUE: not completed AND targetDate calendar day (user TZ) is before today (user TZ)
+                const targetDay = toLocalDate(cp.targetDate);
+                if (targetDay < todayLocal) {
                     overduePending.push(cp);
                 }
-                // targetDay === todayDay → in-progress, not yet overdue
-                // targetDay > todayDay  → future, not yet relevant
+                // targetDay === todayLocal → in-progress today, not yet overdue
+                // targetDay > todayLocal  → future checkpoint
             }
         }
 
@@ -212,8 +235,8 @@ export class AnalyticsService {
 
         return {
             sprintWindow: {
-                start: format(sprintStart, 'yyyy-MM-dd'),
-                end: format(sprintEnd, 'yyyy-MM-dd'),
+                start: sprintStartStr,
+                end: sprintEndStr,
             },
             checkpoints: {
                 planned: { count: totalPlanned, items: planned },
