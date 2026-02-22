@@ -18,19 +18,33 @@ export function createApp(): Express {
   app.use(express.json());
   app.use(cookieParser());
   app.use(requestLogger);
+  // Read comma-separated allowed origins from env (set this in Render dashboard)
+  // e.g. ALLOWED_ORIGINS=https://dream-planner-frontend.vercel.app,https://dreamplanner.vercel.app
+  const envOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+    : [];
+
   const allowedOrigins = [
+    ...envOrigins,
+    // Hardcoded fallbacks (keep updated with your real Vercel URLs)
     'https://dream-planner-frontend.vercel.app',
     'https://dream-planner-one.vercel.app',
+    'http://localhost:5173',
     'http://localhost:8080',
-    'http://localhost:5173', // Vite local
-    'https://your-frontend-domain.com'
   ];
-
-
 
   app.use(
     cors({
-      origin: allowedOrigins,
+      origin: (origin, callback) => {
+        // Allow requests with no origin (curl, mobile apps, Postman)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          console.warn(`[CORS] Blocked origin: ${origin}`);
+          callback(new Error(`CORS: origin ${origin} not allowed`));
+        }
+      },
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
       credentials: true,
