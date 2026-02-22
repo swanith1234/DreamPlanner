@@ -50,45 +50,52 @@ export interface SprintDashboard {
 export class AnalyticsService {
 
     // ── Sprint window helpers ──────────────────────────────────────────────────
-
-    private sprintBounds(date: Date = new Date()) {
+    // Pure UTC date-string arithmetic — no server timezone dependency.
+    // Input: YYYY-MM-DD string in user's local timezone.
+    // Returns: sprint start (Monday) and end (Sunday) as YYYY-MM-DD strings.
+    private sprintBounds(todayStr: string): { startStr: string; endStr: string } {
+        // Parse the date string as UTC noon to avoid any DST ambiguity
+        const d = new Date(todayStr + 'T12:00:00Z');
+        // getUTCDay(): 0=Sun, 1=Mon, ..., 6=Sat
+        // Days since last Monday (Mon=0 offset)
+        const dow = (d.getUTCDay() + 6) % 7; // Mon=0 ... Sun=6
+        const monday = new Date(d);
+        monday.setUTCDate(d.getUTCDate() - dow);
+        const sunday = new Date(monday);
+        sunday.setUTCDate(monday.getUTCDate() + 6);
         return {
-            start: startOfWeek(date, { weekStartsOn: 1 }),  // Monday 00:00
-            end: endOfWeek(date, { weekStartsOn: 1 }),     // Sunday 23:59:59
+            startStr: monday.toISOString().slice(0, 10), // 'YYYY-MM-DD'
+            endStr: sunday.toISOString().slice(0, 10),
         };
     }
 
     // ── Core: compute live weekly dashboard ───────────────────────────────────
 
     async computeDashboard(userId: string, date: Date = new Date()): Promise<SprintDashboard> {
-        // ── 0. User timezone ──────────────────────────────────────────────────────
+        // ── 0. User timezone & sprint window (pure UTC string arithmetic) ──────────
         const userRecord = await prisma.user.findUnique({
             where: { id: userId },
             select: { timezone: true },
         });
-        const tz = userRecord?.timezone || 'Asia/Kolkata'; // fall back to IST if not set
+        const tz = userRecord?.timezone || 'Asia/Kolkata';
 
-        // Helper: convert any UTC Date to a YYYY-MM-DD string in the user's TZ
+        // Convert any UTC Date → YYYY-MM-DD in user's timezone (uses date-fns-tz)
         const toLocalDate = (d: Date) => formatInTimeZone(d, tz, 'yyyy-MM-dd');
 
-        // "Today" in user's local timezone
+        // Today as YYYY-MM-DD in user's TZ
         const todayLocal = toLocalDate(date);
 
-        // ── Sprint window in user's timezone ──────────────────────────────────────
-        // Convert "now" to the user's local midnight, then compute Mon/Sun of that week
-        const nowInUserTZ = toZonedTime(date, tz);
-        const { start: sprintStart, end: sprintEnd } = this.sprintBounds(nowInUserTZ);
+        // Sprint boundaries as YYYY-MM-DD strings computed purely from the date string
+        const { startStr: sprintStartStr, endStr: sprintEndStr } = this.sprintBounds(todayLocal);
 
-        // Sprint YYYY-MM-DD strings in user's TZ (used to label the window)
-        const sprintStartStr = toLocalDate(sprintStart);
-        const sprintEndStr = toLocalDate(sprintEnd);
+        // DB query range: pad ±1 day around sprint so no UTC-offset checkpoint is missed.
+        // All filtering by sprint membership happens in JS using toLocalDate().
+        const queryStart = new Date(sprintStartStr + 'T00:00:00Z');
+        queryStart.setUTCDate(queryStart.getUTCDate() - 1);
+        const queryEnd = new Date(sprintEndStr + 'T23:59:59Z');
+        queryEnd.setUTCDate(queryEnd.getUTCDate() + 1);
 
-        // For the DB query: pad 1 day on each side to catch any UTC-vs-TZ edge cases;
-        // we'll filter the in-sprint checkpoints in JS using the user's timezone.
-        const queryStart = new Date(sprintStart); queryStart.setDate(queryStart.getDate() - 1);
-        const queryEnd = new Date(sprintEnd); queryEnd.setDate(queryEnd.getDate() + 1);
-
-        // ── 1. Fetch checkpoints near the sprint and filter in JS by user TZ ─────
+        // ── 1. Fetch checkpoints near the sprint; filter in JS by user TZ ─────────
         const allPlannedRaw = await prisma.taskCheckpoint.findMany({
             where: {
                 task: { userId },
@@ -97,11 +104,27 @@ export class AnalyticsService {
             orderBy: { orderIndex: 'asc' },
         });
 
-        // Keep only checkpoints whose targetDate calendar-day (in user's TZ)
-        // falls within [sprintStartStr, sprintEndStr]
+        // DEBUG
+        console.log('\n=== ANALYTICS DEBUG ===');
+        console.log('TZ:', tz);
+        console.log('todayLocal:', todayLocal);
+        console.log('sprint:', sprintStartStr, '->', sprintEndStr);
+        console.log('queryStart (UTC):', queryStart.toISOString());
+        console.log('queryEnd   (UTC):', queryEnd.toISOString());
+        console.log('raw checkpoints from DB:', allPlannedRaw.map(cp => ({
+            id: cp.id.slice(0, 8),
+            targetDate_UTC: cp.targetDate.toISOString(),
+            targetDate_localStr: toLocalDate(cp.targetDate),
+            isCompleted: cp.isCompleted,
+            completedAt_UTC: cp.completedAt?.toISOString(),
+        })));
+
+        // Keep only those whose targetDate calendar-day (user TZ) is within sprint
         const planned = allPlannedRaw.filter(cp => {
             const d = toLocalDate(cp.targetDate);
-            return d >= sprintStartStr && d <= sprintEndStr;
+            const inSprint = d >= sprintStartStr && d <= sprintEndStr;
+            console.log(`  cp ${cp.id.slice(0, 8)} targetLocalDate=${d} inSprint=${inSprint}`);
+            return inSprint;
         });
 
         // ── 2. Fetch ALL checkpoints for the user to support EARLY detection ──────
@@ -152,24 +175,31 @@ export class AnalyticsService {
                 }
 
                 if (isEarly) {
+                    console.log(`  cp ${cp.id.slice(0, 8)} -> EARLY`);
                     earlyCompleted.push(cp);
                 } else if (cp.completedAt) {
-                    // RECOVERED: completedAt calendar date (user TZ) is after targetDate calendar date (user TZ)
                     const completedDay = toLocalDate(cp.completedAt);
                     const targetDay = toLocalDate(cp.targetDate);
+                    console.log(`  cp ${cp.id.slice(0, 8)} completedDay=${completedDay} targetDay=${targetDay}`);
                     if (completedDay > targetDay) {
+                        console.log(`  cp ${cp.id.slice(0, 8)} -> RECOVERED`);
                         recovered.push(cp);
                     } else {
+                        console.log(`  cp ${cp.id.slice(0, 8)} -> ON_TIME`);
                         onTimeCompleted.push(cp);
                     }
                 } else {
+                    console.log(`  cp ${cp.id.slice(0, 8)} -> ON_TIME (no completedAt)`);
                     onTimeCompleted.push(cp);
                 }
             } else {
-                // OVERDUE: not completed AND targetDate calendar day (user TZ) is before today (user TZ)
                 const targetDay = toLocalDate(cp.targetDate);
+                console.log(`  cp ${cp.id.slice(0, 8)} NOT completed targetDay=${targetDay} todayLocal=${todayLocal}`);
                 if (targetDay < todayLocal) {
+                    console.log(`  cp ${cp.id.slice(0, 8)} -> OVERDUE`);
                     overduePending.push(cp);
+                } else {
+                    console.log(`  cp ${cp.id.slice(0, 8)} -> IN_PROGRESS (today or future)`);
                 }
                 // targetDay === todayLocal → in-progress today, not yet overdue
                 // targetDay > todayLocal  → future checkpoint
@@ -195,15 +225,15 @@ export class AnalyticsService {
         const TOTAL_SPRINT_DAYS = 7;
         const dailyEffort: Record<string, number> = {};
         for (let i = 0; i < TOTAL_SPRINT_DAYS; i++) {
-            const d = new Date(sprintStart);
-            d.setDate(d.getDate() + i);
-            dailyEffort[format(d, 'yyyy-MM-dd')] = 0;
+            const d = new Date(sprintStartStr + 'T12:00:00Z');
+            d.setUTCDate(d.getUTCDate() + i);
+            dailyEffort[d.toISOString().slice(0, 10)] = 0;
         }
 
         // Accumulate Day records (one row per user/checkpoint/day) into the map
         let totalEffort = 0;
         for (const d of dayRecords) {
-            const key = format(d.date, 'yyyy-MM-dd');
+            const key = toLocalDate(d.date);
             if (key in dailyEffort) {
                 dailyEffort[key] += d.effort;
             }
@@ -263,7 +293,9 @@ export class AnalyticsService {
     async finalizeWeeklySnapshot(userId: string, date: Date = new Date()): Promise<void> {
         try {
             const dashboard = await this.computeDashboard(userId, date);
-            const { start: weekStart, end: weekEnd } = this.sprintBounds(date);
+            const tz2 = (await prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } }))?.timezone || 'Asia/Kolkata';
+            const todayStr2 = formatInTimeZone(date, tz2, 'yyyy-MM-dd');
+            const { startStr: weekStart, endStr: weekEnd } = this.sprintBounds(todayStr2);
 
             const {
                 checkpoints: { planned, earlyCompleted, onTimeCompleted, recovered, overduePending },
