@@ -11,10 +11,11 @@
 
 import prisma from '../../config/database';
 import { logger } from '../../utils/logger';
-import { startOfWeek, endOfWeek, startOfDay, format } from 'date-fns';
+import { startOfWeek, endOfWeek, differenceInDays, startOfDay, format } from 'date-fns';
 import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
-import { MotivationTone } from '@prisma/client';
+import { MotivationTone, UserEventType } from '@prisma/client';
 import { generateWeeklyInsight } from './analytics.llm';
+import { userEventService } from '../event/user-event.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -415,6 +416,48 @@ export class AnalyticsService {
         return prisma.userInsightSnapshot.findFirst({
             where: { userId, dreamId: null, weekStart: weekStartDate },
         });
+    }
+
+    // ── Top-level triggers for external Webhooks (Render cron) ────────────────
+
+    async runWeeklySnapshotsForAllUsers() {
+        try {
+            const users = await prisma.user.findMany({ select: { id: true } });
+            for (const user of users) {
+                await this.finalizeWeeklySnapshot(user.id);
+            }
+            logger.info('analytics', `Weekly snapshots done for ${users.length} users`);
+        } catch (error: any) {
+            logger.error('analytics', 'Error running weekly snapshots', { error: error.message });
+            throw error;
+        }
+    }
+
+    async runDailyActivityCheckForAllUsers() {
+        try {
+            const todayStart = startOfDay(new Date());
+            const users = await prisma.user.findMany({ select: { id: true } });
+
+            for (const user of users) {
+                const hadActivity = await prisma.day.findFirst({
+                    where: { userId: user.id, date: todayStart },
+                });
+
+                if (!hadActivity) {
+                    await userEventService.logEvent(
+                        user.id,
+                        UserEventType.DAY_WITH_NO_ACTIVITY,
+                        'NOTIFICATION',
+                        'system',
+                        { date: todayStart.toISOString() }
+                    );
+                }
+            }
+            logger.info('analytics', `Daily activity check done for ${users.length} users`);
+        } catch (error: any) {
+            logger.error('analytics', 'Error running daily activity check', { error: error.message });
+            throw error;
+        }
     }
 }
 

@@ -59,6 +59,32 @@ export class AnalyticsController {
     }
 
     /**
+     * POST /api/analytics/cron/weekly
+     * Public webhook for external cron runner to trigger weekly snapshot for all users
+     */
+    async runWeeklyCron(req: import('express').Request, res: Response) {
+        try {
+            await analyticsService.runWeeklySnapshotsForAllUsers();
+            res.json({ success: true, message: 'Weekly snapshots processed' });
+        } catch (error: any) {
+            res.status(500).json({ error: error.message });
+        }
+    }
+
+    /**
+     * POST /api/analytics/cron/daily
+     * Public webhook for external cron runner to trigger daily lack of activity checks
+     */
+    async runDailyCron(req: import('express').Request, res: Response) {
+        try {
+            await analyticsService.runDailyActivityCheckForAllUsers();
+            res.json({ success: true, message: 'Daily activity check processed' });
+        } catch (error: any) {
+            res.status(500).json({ error: error.message });
+        }
+    }
+
+    /**
      * POST /api/analytics/generate
      * Developer / test helper — manually triggers snapshot finalization.
      */
