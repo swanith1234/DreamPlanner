@@ -6,5 +6,6 @@ const router = Router();
 
 router.put('/preferences', authMiddleware, userController.updatePreferences);
 router.get('/preferences', authMiddleware, userController.getPreferences);
+router.put('/profile', authMiddleware, (req, res) => userController.updateProfile(req, res));
 
 export default router;

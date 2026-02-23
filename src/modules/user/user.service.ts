@@ -36,6 +36,14 @@ export class UserService {
             where: { userId },
         });
     }
+
+    async updateProfile(userId: string, data: { timezone?: string }) {
+        return prisma.user.update({
+            where: { id: userId },
+            data: { timezone: data.timezone },
+            select: { id: true, email: true, name: true, timezone: true },
+        });
+    }
 }
 
 export const userService = new UserService();

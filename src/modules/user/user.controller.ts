@@ -12,6 +12,16 @@ export class UserController {
         }
     }
 
+    async updateProfile(req: AuthRequest, res: Response) {
+        try {
+            const { timezone } = req.body;
+            const result = await userService.updateProfile(req.userId!, { timezone });
+            res.status(200).json(result);
+        } catch (error: any) {
+            res.status(500).json({ error: error.message });
+        }
+    }
+
     async getPreferences(req: AuthRequest, res: Response) {
         try {
             const result = await userService.getPreferences(req.userId!);
