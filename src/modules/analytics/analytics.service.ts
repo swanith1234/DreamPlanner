@@ -310,19 +310,30 @@ export class AnalyticsService {
 
             const updatePayload = {
                 activeDays,
+                missedDays: 7 - activeDays,
                 disciplineScore,
                 consistencyScore,
+                executionRate,
+                recoveryRate,
+                intensityScore: dashboard.scores.intensity,
                 totalCheckpointsPlanned: planned.count,
                 totalCheckpointsCompleted: totalCompleted,
                 lateCheckpoints,
                 earlyStarts,
                 overachievementDays: dashboard.activity.overachievementDays,
+                overduePending: overduePending.count,
+                recovered: recovered.count,
                 dailyEffort,
+                finalizedAt: new Date(),
                 updatedAt: new Date(),
             };
 
+            // weekStart/weekEnd stored as DateTime — convert ISO date strings to Date objects
+            const weekStartDate = new Date(weekStart + 'T00:00:00Z');
+            const weekEndDate = new Date(weekEnd + 'T00:00:00Z');
+
             const existing = await prisma.userInsightSnapshot.findFirst({
-                where: { userId, dreamId: null, weekStart },
+                where: { userId, dreamId: null, weekStart: weekStartDate },
             });
 
             let snapshot;
@@ -336,9 +347,8 @@ export class AnalyticsService {
                     data: {
                         userId,
                         dreamId: null,
-                        weekStart,
-                        weekEnd,
-                        missedDays: 7 - activeDays,
+                        weekStart: weekStartDate,
+                        weekEnd: weekEndDate,
                         longestStreak: 0,
                         currentStreak: 0,
                         avgDailyProgress: 0,
@@ -379,6 +389,32 @@ export class AnalyticsService {
             logger.error('analytics', 'Failed to finalize weekly snapshot', { userId, error: error.message });
             throw error;
         }
+    }
+
+    // ── List all finalized sprint snapshots for a user (for sprint picker) ────
+    async listPastSprints(userId: string) {
+        return prisma.userInsightSnapshot.findMany({
+            where: { userId, dreamId: null, finalizedAt: { not: null } },
+            orderBy: { weekStart: 'desc' },
+            select: {
+                id: true,
+                weekStart: true,
+                weekEnd: true,
+                disciplineScore: true,
+                executionRate: true,
+                recoveryRate: true,
+                totalCheckpointsPlanned: true,
+                totalCheckpointsCompleted: true,
+            },
+        });
+    }
+
+    // ── Get full stored snapshot by weekStart ISO string ──────────────────────
+    async getSprintSnapshot(userId: string, weekStart: string) {
+        const weekStartDate = new Date(weekStart + 'T00:00:00Z');
+        return prisma.userInsightSnapshot.findFirst({
+            where: { userId, dreamId: null, weekStart: weekStartDate },
+        });
     }
 }
 

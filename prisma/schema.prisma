@@ -352,13 +352,20 @@ model UserInsightSnapshot {
   earlyStarts               Int
   overachievementDays       Int
 
+  // New: rates & category counts
+  executionRate   Int  @default(0)   // 0–100
+  recoveryRate    Int  @default(0)   // 0–100
+  intensityScore  Int  @default(0)   // 0–100
+  overduePending  Int  @default(0)
+  recovered       Int  @default(0)
+
   // Effort
   avgDailyProgress        Float
   avgProgressLatencyHours Float
 
   // Visualization payloads
-  dailyEffort Json    // { Mon: 120, Tue: 80, ... }
-  dailyStatus Json    // { Mon: "HIGH", Tue: "LOW", ... }
+  dailyEffort Json    // { "2026-02-16": 80, ... }
+  dailyStatus Json    // { "2026-02-16": "HIGH", ... }
 
   // Scores
   disciplineScore  Int  // 0–100

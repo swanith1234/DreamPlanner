@@ -27,6 +27,38 @@ export class AnalyticsController {
     }
 
     /**
+     * GET /api/analytics/sprints
+     * Returns summary list of all finalized sprint snapshots for the sprint picker.
+     */
+    async listSprints(req: AuthRequest, res: Response) {
+        try {
+            const userId = req.userId;
+            if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+            const sprints = await analyticsService.listPastSprints(userId);
+            res.json(sprints);
+        } catch (error: any) {
+            res.status(500).json({ error: error.message });
+        }
+    }
+
+    /**
+     * GET /api/analytics/sprint/:weekStart
+     * Returns the full stored snapshot for a specific week (YYYY-MM-DD).
+     */
+    async getSprintByWeekStart(req: AuthRequest, res: Response) {
+        try {
+            const userId = req.userId;
+            if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+            const { weekStart } = req.params;
+            const snapshot = await analyticsService.getSprintSnapshot(userId, weekStart);
+            if (!snapshot) return res.status(404).json({ error: 'Sprint snapshot not found' });
+            res.json(snapshot);
+        } catch (error: any) {
+            res.status(500).json({ error: error.message });
+        }
+    }
+
+    /**
      * POST /api/analytics/generate
      * Developer / test helper — manually triggers snapshot finalization.
      */
