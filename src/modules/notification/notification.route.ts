@@ -6,15 +6,14 @@ import { authMiddleware } from '../../middleware/auth';
 import { runNotificationCron } from './notification.cron';
 const router = Router();
 
-// Public / Internal Routes (Protected by custom secret)
-router.post('/internal/cron/notifications', async (req, res) => {
-  if (req.headers['x-cron-secret'] !== process.env.CRON_SECRET) {
-    return res.status(401).json({ error: 'Unauthorized' });
+// Public Webhook for External Cron (e.g. Render) to trigger every minute
+router.post('/cron/trigger', async (req, res) => {
+  try {
+    const result = await runNotificationCron();
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
-
-  // TODO: Implement notification cron functionality
-  const result = await runNotificationCron();
-  res.json(result);
 });
 
 // Protected User Routes
