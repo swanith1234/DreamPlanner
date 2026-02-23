@@ -377,7 +377,7 @@ export class AnalyticsService {
                     data: {
                         userId,
                         dreamId: null,
-                        weekStart,
+                        weekStart: weekStartDate,
                         insightType: insight.insightType,
                         evidence: { ...insight.evidence, narrative: insight.message },
                         consumed: false,
