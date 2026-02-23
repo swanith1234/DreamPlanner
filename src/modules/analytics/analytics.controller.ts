@@ -64,8 +64,9 @@ export class AnalyticsController {
      */
     async runWeeklyCron(req: import('express').Request, res: Response) {
         try {
-            await analyticsService.runWeeklySnapshotsForAllUsers();
-            res.json({ success: true, message: 'Weekly snapshots processed' });
+            const targetDateStr = (req.body?.date || req.query?.date) as string | undefined;
+            await analyticsService.runWeeklySnapshotsForAllUsers(targetDateStr);
+            res.json({ success: true, message: 'Weekly snapshots processed', date: targetDateStr || 'today' });
         } catch (error: any) {
             res.status(500).json({ error: error.message });
         }

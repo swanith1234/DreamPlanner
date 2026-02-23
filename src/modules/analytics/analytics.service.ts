@@ -420,13 +420,14 @@ export class AnalyticsService {
 
     // ── Top-level triggers for external Webhooks (Render cron) ────────────────
 
-    async runWeeklySnapshotsForAllUsers() {
+    async runWeeklySnapshotsForAllUsers(targetDateStr?: string) {
         try {
+            const targetDate = targetDateStr ? new Date(targetDateStr + 'T12:00:00Z') : new Date();
             const users = await prisma.user.findMany({ select: { id: true } });
             for (const user of users) {
-                await this.finalizeWeeklySnapshot(user.id);
+                await this.finalizeWeeklySnapshot(user.id, targetDate);
             }
-            logger.info('analytics', `Weekly snapshots done for ${users.length} users`);
+            logger.info('analytics', `Weekly snapshots done for ${users.length} users`, { targetDateStr });
         } catch (error: any) {
             logger.error('analytics', 'Error running weekly snapshots', { error: error.message });
             throw error;
