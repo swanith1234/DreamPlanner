@@ -60,11 +60,16 @@ export class TaskService {
         priority: input.priority,
         status: TaskStatus.PENDING,
         checkpoints: {
-          create: (input.checkpoints ?? []).map(cp => ({
-            title: cp.title,
-            targetDate: new Date(cp.targetDate),
-            orderIndex: cp.orderIndex,
-          })),
+          create: (input.checkpoints ?? []).map(cp => {
+            // Force YYYY-MM-DD to midday UTC so it never shifts calendar day
+            // regardless of server or database timezone config (-12 to +12 safe)
+            const safeDate = new Date(`${cp.targetDate}T12:00:00Z`);
+            return {
+              title: cp.title,
+              targetDate: safeDate,
+              orderIndex: cp.orderIndex,
+            };
+          }),
         },
       },
     });
@@ -232,7 +237,7 @@ export class TaskService {
 
     const updateData: any = { isUserEdited: true };
     if (data.title) updateData.title = data.title;
-    if (data.targetDate) updateData.targetDate = new Date(data.targetDate);
+    if (data.targetDate) updateData.targetDate = new Date(`${data.targetDate}T12:00:00Z`);
 
     return prisma.taskCheckpoint.update({ where: { id: checkpointId }, data: updateData });
   }
