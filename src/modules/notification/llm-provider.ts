@@ -140,7 +140,7 @@ function getToneInstruction(tone: MotivationTone): string {
  * Default messages (fallback)
  */
 function getDefaultMessage(notificationType: NotificationType): string {
-  const defaults: Record<NotificationType, string> = {
+  const defaults: Partial<Record<NotificationType, string>> = {
     REMINDER: 'Time to check in on your task!',
     MOTIVATIONAL: 'Keep going!',
     SYSTEM: 'New notification',
