@@ -62,8 +62,9 @@ export class TaskService {
         checkpoints: {
           create: (input.checkpoints ?? []).map(cp => {
             // Force YYYY-MM-DD to midday UTC so it never shifts calendar day
-            // regardless of server or database timezone config (-12 to +12 safe)
-            const safeDate = new Date(`${cp.targetDate}T12:00:00Z`);
+            // Extract the first 10 chars (YYYY-MM-DD) even if frontend sends full ISO.
+            const dateStr = cp.targetDate.substring(0, 10);
+            const safeDate = new Date(`${dateStr}T12:00:00Z`);
             return {
               title: cp.title,
               targetDate: safeDate,
@@ -237,7 +238,10 @@ export class TaskService {
 
     const updateData: any = { isUserEdited: true };
     if (data.title) updateData.title = data.title;
-    if (data.targetDate) updateData.targetDate = new Date(`${data.targetDate}T12:00:00Z`);
+    if (data.targetDate) {
+      const dateStr = data.targetDate.substring(0, 10);
+      updateData.targetDate = new Date(`${dateStr}T12:00:00Z`);
+    }
 
     return prisma.taskCheckpoint.update({ where: { id: checkpointId }, data: updateData });
   }
