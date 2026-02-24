@@ -39,13 +39,13 @@ export class TaskService {
       if (startDate > deadline) throw new ValidationError('Start date cannot be after deadline');
     }
 
-    // AI relevance check
-    const validation = await taskValidator.validateTaskRelevance(
-      dream.title, dream.description, input.title, input.description || ''
-    );
-    if (!validation.isValid) {
-      throw new ValidationError(`Task does not align with dream: ${validation.feedback}`);
-    }
+    // // AI relevance check
+    // const validation = await taskValidator.validateTaskRelevance(
+    //   dream.title, dream.description, input.title, input.description || ''
+    // );
+    // if (!validation.isValid) {
+    //   throw new ValidationError(`Task does not align with dream: ${validation.feedback}`);
+    // }
 
     // Create task + checkpoints (no stored "active" state — derived at read time)
     const task = await prisma.task.create({
