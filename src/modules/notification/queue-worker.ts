@@ -273,17 +273,8 @@ export class NotificationQueueWorker {
         return;
       }
 
-      // Check if deadline hasn't passed
-      const now = new Date();
-      if (now >= task.deadline) {
-        await logger.info(
-          'queue',
-          'Deadline passed, no more reminders',
-          { taskId, deadline: task.deadline.toISOString() },
-          userId
-        );
-        return;
-      }
+      // (REMOVED: The check for deadline expiration blocking next reminders
+      // has been removed to continue reminding the user about overdue tasks)
 
       // Schedule next reminder via notification service
       // This will create notification in DB + enqueue to BullMQ

@@ -114,7 +114,7 @@ export class NotificationDispatcher {
       const { notification, user, task } = data;
 
       await pushService.sendPushNotification(user.id, {
-        title: 'DreamPlanner',
+        title: 'IgniteMate',
         body: notification.message,
         icon: '/pwa-192x192.png',
         data: {

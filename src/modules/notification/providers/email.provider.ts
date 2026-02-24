@@ -171,10 +171,10 @@
 //               <p><strong>Scheduled Time:</strong> ${scheduledTime}</p>
 //             </div>
 //             <p>Keep making progress towards your goals! 💪</p>
-//             <a href="#" class="button">Open DreamPlanner</a>
+//             <a href="#" class="button">Open IgniteMate</a>
 //           </div>
 //           <div class="footer">
-//             <p>&copy; 2026 DreamPlanner. All rights reserved.</p>
+//             <p>&copy; 2026 IgniteMate. All rights reserved.</p>
 //           </div>
 //         </div>
 //       </body>
@@ -183,21 +183,21 @@
 
 //     const text = `
 //       Task Reminder
-      
+
 //       Hi ${payload.userName},
-      
+
 //       You have a reminder for your task: ${payload.taskTitle || 'Unnamed Task'}${payload.dreamTitle ? ` (Dream: ${payload.dreamTitle})` : ''}
-      
+
 //       Message: ${payload.message}
 //       Scheduled Time: ${scheduledTime}
-      
+
 //       Keep making progress towards your goals!
 //     `;
 
 //     return {
 //       html,
 //       text,
-//       subject: '[DreamPlanner] Task Reminder',
+//       subject: '[IgniteMate] Task Reminder',
 //     };
 //   }
 
@@ -237,7 +237,7 @@
 //             <p><small>Scheduled at: ${scheduledTime}</small></p>
 //           </div>
 //           <div class="footer">
-//             <p>&copy; 2026 DreamPlanner. Dream big, achieve bigger!</p>
+//             <p>&copy; 2026 IgniteMate. Dream big, achieve bigger!</p>
 //           </div>
 //         </div>
 //       </body>
@@ -246,20 +246,20 @@
 
 //     const text = `
 //       Keep Going!
-      
+
 //       Hi ${payload.userName},
-      
+
 //       ${payload.message}
-      
+
 //       Every step counts. You're doing amazing! Keep the momentum going!
-      
+
 //       Scheduled at: ${scheduledTime}
 //     `;
 
 //     return {
 //       html,
 //       text,
-//       subject: '[DreamPlanner] 💪 Motivation Boost',
+//       subject: '[IgniteMate] 💪 Motivation Boost',
 //     };
 //   }
 
@@ -296,7 +296,7 @@
 //             <p><small>Sent at: ${scheduledTime}</small></p>
 //           </div>
 //           <div class="footer">
-//             <p>&copy; 2026 DreamPlanner. All rights reserved.</p>
+//             <p>&copy; 2026 IgniteMate. All rights reserved.</p>
 //           </div>
 //         </div>
 //       </body>
@@ -305,18 +305,18 @@
 
 //     const text = `
 //       System Notification
-      
+
 //       Hi ${payload.userName},
-      
+
 //       ${payload.message}
-      
+
 //       Sent at: ${scheduledTime}
 //     `;
 
 //     return {
 //       html,
 //       text,
-//       subject: '[DreamPlanner] System Notification',
+//       subject: '[IgniteMate] System Notification',
 //     };
 //   }
 
@@ -342,7 +342,7 @@
 //       <body>
 //         <div class="container">
 //           <div class="header">
-//             <h1>📬 DreamPlanner Notification</h1>
+//             <h1>📬 IgniteMate Notification</h1>
 //           </div>
 //           <div class="content">
 //             <p>Hi <strong>${payload.userName}</strong>,</p>
@@ -350,7 +350,7 @@
 //             <p><small>Sent at: ${scheduledTime}</small></p>
 //           </div>
 //           <div class="footer">
-//             <p>&copy; 2026 DreamPlanner. All rights reserved.</p>
+//             <p>&copy; 2026 IgniteMate. All rights reserved.</p>
 //           </div>
 //         </div>
 //       </body>
@@ -358,19 +358,19 @@
 //     `;
 
 //     const text = `
-//       DreamPlanner Notification
-      
+//       IgniteMate Notification
+
 //       Hi ${payload.userName},
-      
+
 //       ${payload.message}
-      
+
 //       Sent at: ${scheduledTime}
 //     `;
 
 //     return {
 //       html,
 //       text,
-//       subject: '[DreamPlanner] Notification',
+//       subject: '[IgniteMate] Notification',
 //     };
 //   }
 
@@ -460,9 +460,9 @@ export class EmailProvider {
 
       // Construct Brevo API Request Body
       const data = {
-        sender: { 
-          name: "Dream Planner", 
-          email: "swanithpidugu@gmail.com" 
+        sender: {
+          name: "Dream Planner",
+          email: "swanithpidugu@gmail.com"
         },
         to: [{ email: payload.to, name: payload.userName }],
         subject: subject,
@@ -554,10 +554,10 @@ export class EmailProvider {
               <p><strong>Scheduled Time:</strong> ${scheduledTime}</p>
             </div>
             <p>Keep making progress towards your goals! 💪</p>
-            <a href="#" class="button">Open DreamPlanner</a>
+            <a href="#" class="button">Open IgniteMate</a>
           </div>
           <div class="footer">
-            <p>&copy; 2026 DreamPlanner. All rights reserved.</p>
+            <p>&copy; 2026 IgniteMate. All rights reserved.</p>
           </div>
         </div>
       </body>
@@ -580,7 +580,7 @@ export class EmailProvider {
     return {
       html,
       text,
-      subject: '[DreamPlanner] Task Reminder',
+      subject: '[IgniteMate] Task Reminder',
     };
   }
 
@@ -620,7 +620,7 @@ export class EmailProvider {
             <p><small>Scheduled at: ${scheduledTime}</small></p>
           </div>
           <div class="footer">
-            <p>&copy; 2026 DreamPlanner. Dream big, achieve bigger!</p>
+            <p>&copy; 2026 IgniteMate. Dream big, achieve bigger!</p>
           </div>
         </div>
       </body>
@@ -642,7 +642,7 @@ export class EmailProvider {
     return {
       html,
       text,
-      subject: '[DreamPlanner] 💪 Motivation Boost',
+      subject: '[IgniteMate] 💪 Motivation Boost',
     };
   }
 
@@ -679,7 +679,7 @@ export class EmailProvider {
             <p><small>Sent at: ${scheduledTime}</small></p>
           </div>
           <div class="footer">
-            <p>&copy; 2026 DreamPlanner. All rights reserved.</p>
+            <p>&copy; 2026 IgniteMate. All rights reserved.</p>
           </div>
         </div>
       </body>
@@ -699,7 +699,7 @@ export class EmailProvider {
     return {
       html,
       text,
-      subject: '[DreamPlanner] System Notification',
+      subject: '[IgniteMate] System Notification',
     };
   }
 
@@ -725,7 +725,7 @@ export class EmailProvider {
       <body>
         <div class="container">
           <div class="header">
-            <h1>📬 DreamPlanner Notification</h1>
+            <h1>📬 IgniteMate Notification</h1>
           </div>
           <div class="content">
             <p>Hi <strong>${payload.userName}</strong>,</p>
@@ -733,7 +733,7 @@ export class EmailProvider {
             <p><small>Sent at: ${scheduledTime}</small></p>
           </div>
           <div class="footer">
-            <p>&copy; 2026 DreamPlanner. All rights reserved.</p>
+            <p>&copy; 2026 IgniteMate. All rights reserved.</p>
           </div>
         </div>
       </body>
@@ -741,7 +741,7 @@ export class EmailProvider {
     `;
 
     const text = `
-      DreamPlanner Notification
+      IgniteMate Notification
       
       Hi ${payload.userName},
       
@@ -753,7 +753,7 @@ export class EmailProvider {
     return {
       html,
       text,
-      subject: '[DreamPlanner] Notification',
+      subject: '[IgniteMate] Notification',
     };
   }
 

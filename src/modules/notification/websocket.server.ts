@@ -60,7 +60,7 @@ export class NotificationWebSocketServer {
                 });
 
                 // Send welcome ping
-                ws.send(JSON.stringify({ type: 'WELCOME', message: 'Connected to DreamPlanner Realtime' }));
+                ws.send(JSON.stringify({ type: 'WELCOME', message: 'Connected to IgniteMate Realtime' }));
 
             } catch (error) {
                 logger.error('websocket', 'Connection authentication failed', { error: (error as Error).message });

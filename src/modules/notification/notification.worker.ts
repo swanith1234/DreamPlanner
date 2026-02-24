@@ -293,11 +293,8 @@ export class NotificationWorker {
           return;
         }
 
-        // Check if deadline passed
-        const now = new Date();
-        if (now >= new Date(task.deadline)) {
-          return;
-        }
+        // (REMOVED: The deadline-based exit has been removed here to ensure
+        // overdue tasks continue to trigger reminders until completed or blocked.)
 
         // Schedule ONE next reminder
         await notificationService.scheduleNextReminder(

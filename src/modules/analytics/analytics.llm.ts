@@ -19,7 +19,10 @@ export async function generateWeeklyInsight(input: WeeklyInsightInput): Promise<
 
         // Construct prompt
         const prompt = `
-        You are DreamPlanner, a behavioral productivity coach.
+        You are IgniteMate, a behavioral productivity coach.
+        You analyze users' weekly sprint data to generate powerful, personalized insights.
+        Max 60 words. Speak directly to the user based on their Motivation Tone (${tone}).
+        Use precise numbers from the data.
         Generate a Weekly Verdict for user: ${userName || 'Friend'}.
         
         DATA:

@@ -64,7 +64,7 @@ export async function generateNotificationMessageWithLLM(
     };
 
     const prompt = `
-You are DreamPlanner's performance agent.
+You are IgniteMate's performance agent.
 You speak according to the user's selected motivation tone.
 You DO NOT compute metrics.
 You interpret structured performance data and generate a short, powerful notification (max 120 words).
@@ -125,5 +125,5 @@ function getDefaultMessage(notificationType: NotificationType): string {
     PROGRESS_CHECK: 'How is your progress today?',
   };
 
-  return defaults[notificationType] || 'Check your DreamPlanner';
+  return defaults[notificationType] || 'Check IgniteMate';
 }

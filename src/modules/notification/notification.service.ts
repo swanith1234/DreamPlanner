@@ -145,16 +145,8 @@ export class NotificationService {
         return;
       }
 
-      // Check if deadline passed
-      if (new Date() >= deadline) {
-        await logger.info(
-          'notification',
-          'Deadline passed, no more reminders',
-          { taskId, deadline: deadline.toISOString() },
-          userId
-        );
-        return;
-      }
+      // (REMOVED: The logic here used to terminate reminders when new Date() >= deadline.
+      // This has been removed so the user is actively reminded about overdue tasks.)
 
       // Get user with preferences
       const user = await prisma.user.findUnique({
