@@ -26,11 +26,12 @@ export class NotificationDispatcher {
 
     try {
       // ── Email (best-effort, never blocks delivery success) ────────────────────
-      const emailResult = await this.dispatchEmail(data);
-      if (!emailResult.success && emailResult.error) {
-        errors.push(`Email: ${emailResult.error}`);
-        await logger.warn('dispatcher', 'Email channel failed', { error: emailResult.error, notificationId: data.notification.id });
-      }
+      // *** COMMENTED OUT AS PER USER REQUEST - NO EMAIL NOTIFICATIONS ***
+      // const emailResult = await this.dispatchEmail(data);
+      // if (!emailResult.success && emailResult.error) {
+      //   errors.push(`Email: ${emailResult.error}`);
+      //   await logger.warn('dispatcher', 'Email channel failed', { error: emailResult.error, notificationId: data.notification.id });
+      // }
 
       // ── Web Push ─────────────────────────────────────────────────────────────
       const webResult = await this.dispatchWebPush(data);

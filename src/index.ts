@@ -5,7 +5,7 @@ import { createApp } from './app';
 import { eventWorker } from './modules/event/event.worker';
 import { initializeNotificationQueue, closeNotificationQueue } from './modules/notification/queue';
 import { notificationQueueWorker } from './modules/notification/queue-worker';
-import { emailProvider } from './modules/notification/providers/email.provider';
+// import { emailProvider } from './modules/notification/providers/email.provider';
 import { disconnectRedis } from './config/queue';
 import { notificationWS } from './modules/notification/websocket.server';
 
@@ -18,7 +18,7 @@ async function start() {
     await logger.info('server', 'Database connected');
 
     // Initialize email provider
-    await emailProvider.initialize();
+    // await emailProvider.initialize();
     await logger.info('server', 'Email provider initialized');
 
     // Initialize BullMQ notification queue
