@@ -63,6 +63,17 @@ enum MotivationTone {
   NEUTRAL
 }
 
+enum BehavioralState {
+  MOMENTUM_BUILDING
+  MOMENTUM_DECLINING
+  STAGNATING
+  AVOIDANCE_MODE
+  OVERLOADED
+  RESILIENT_FIGHTER
+  HIGH_PERFORMER
+  STABLE
+}
+
 ///////////////////////
 // USER & AUTH
 ///////////////////////
@@ -370,6 +381,9 @@ model UserInsightSnapshot {
   // Scores
   disciplineScore  Int  // 0–100
   consistencyScore Int  // 0–100
+
+  // Behavioral Classification
+  behavioralState BehavioralState @default(STABLE)
 
   finalizedAt DateTime?
   createdAt   DateTime @default(now())

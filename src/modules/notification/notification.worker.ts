@@ -139,19 +139,74 @@ export class NotificationWorker {
       let messageText = notification.message; // Default/fallback
 
       if (type === 'REMINDER' || type === 'MOTIVATIONAL') {
-        // Use our wrapper
-        // We need to import generateNotificationMessageWithLLM from llm-provider
         const { generateNotificationMessageWithLLM } = require('./llm-provider');
+        const { analyticsService } = require('../analytics/analytics.service');
+        const { subDays } = require('date-fns');
 
-        messageText = await generateNotificationMessageWithLLM({
+        // Fetch live sprint analytics
+        let currentSprintDashboard = null;
+        let pastSnapshot = null;
+
+        try {
+          // Live calculation
+          currentSprintDashboard = await analyticsService.computeDashboard(userId, now);
+
+          // Get the previous week's finalized snapshot for historical state comparison
+          const todayStr = now.toISOString().split('T')[0];
+          const sprintStartStr = currentSprintDashboard?.sprintWindow?.start || todayStr;
+          const currentWeekStart = new Date(sprintStartStr + 'T12:00:00Z');
+          const previousWeekStart = subDays(currentWeekStart, 7);
+
+          const { PrismaClient } = require('@prisma/client');
+          const prisma = new PrismaClient();
+
+          pastSnapshot = await prisma.userInsightSnapshot.findFirst({
+            where: { userId, dreamId: null, weekStart: previousWeekStart }
+          });
+        } catch (e: any) {
+          await logger.warn('notification', 'Failed to fetch analytics for prompt context', { error: e.message });
+        }
+
+        // Format the input strictly to match our new JSON-like LLM spec
+        const llmInput = {
           notificationType: type,
           userTone: user.preferences?.motivationTone || 'NEUTRAL',
-          task,
-          dream,
-          checkpoint: currentCheckpoint,
-          progress: progressInfo,
-          timeOfDay
-        });
+
+          userIdentity: {
+            dreamTitle: dream?.title || 'Your Dream',
+            motivationStatement: dream?.motivationStatement || 'To achieve greatness.',
+            deadlineInDays: dream?.deadline ? Math.round((new Date(dream.deadline).getTime() - now.getTime()) / (1000 * 3600 * 24)) : 30,
+            tone: user.preferences?.motivationTone || 'NEUTRAL',
+          },
+
+          currentSprint: currentSprintDashboard ? {
+            disciplineScore: currentSprintDashboard.scores.disciplineScore,
+            activeDays: `${currentSprintDashboard.activity.activeDays}/7`,
+            lateCheckpoints: currentSprintDashboard.checkpoints.recovered.count + currentSprintDashboard.checkpoints.overduePending.count,
+            overdueTasks: currentSprintDashboard.checkpoints.overduePending.count,
+            currentStreak: 0, // Placeholder
+            effortTrend: 'N/A', // Calculated at week end usually, LLM can infer from activeDays
+            remainingWorkPercent: currentSprintDashboard.checkpoints.planned.count > 0
+              ? Math.round(100 - currentSprintDashboard.rates.executionRate) : 0,
+            behavioralState: 'LIVE_COMPUTING',
+          } : undefined,
+
+          pastSprint: pastSnapshot ? {
+            disciplineScore: pastSnapshot.disciplineScore,
+            disciplineTrend: 'N/A', // LLM will compare past vs current discipline
+            behavioralState: pastSnapshot.behavioralState || 'STABLE',
+          } : undefined,
+
+          today: {
+            checkpointTitle: currentCheckpoint?.title || task?.title || 'Daily Focus',
+            currentProgress: progressInfo?.current || 0,
+            target: progressInfo?.expected || 100,
+            isBehindSchedule: (progressInfo?.current || 0) < (progressInfo?.expected || 0),
+            hoursLeftToday: Math.max(0, 24 - now.getHours()),
+          }
+        };
+
+        messageText = await generateNotificationMessageWithLLM(llmInput);
       }
 
       // 3. ATTACH ACTIONS (Buttons)

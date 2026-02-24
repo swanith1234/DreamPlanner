@@ -11,9 +11,9 @@
 
 import prisma from '../../config/database';
 import { logger } from '../../utils/logger';
-import { startOfWeek, endOfWeek, differenceInDays, startOfDay, format } from 'date-fns';
+import { startOfWeek, endOfWeek, differenceInDays, startOfDay, format, endOfDay, min, subDays } from 'date-fns';
 import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
-import { MotivationTone, UserEventType } from '@prisma/client';
+import { MotivationTone, UserEventType, BehavioralState } from '@prisma/client';
 import { generateWeeklyInsight } from './analytics.llm';
 import { userEventService } from '../event/user-event.service';
 
@@ -333,6 +333,58 @@ export class AnalyticsService {
             const weekStartDate = new Date(weekStart + 'T00:00:00Z');
             const weekEndDate = new Date(weekEnd + 'T00:00:00Z');
 
+            // ── COMPUTE BEHAVIORAL STATE ────────────────────────────────────────────────
+            const previousWeekStart = subDays(weekStartDate, 7);
+            const pastSnapshot = await prisma.userInsightSnapshot.findFirst({
+                where: { userId, dreamId: null, weekStart: previousWeekStart }
+            });
+
+            // 1. Discipline Trend
+            const pastDiscipline = pastSnapshot?.disciplineScore ?? disciplineScore;
+            const disciplineTrend = disciplineScore - pastDiscipline;
+
+            // 2. Effort Trend (Last 3 days vs Previous 3 days of *this* sprint)
+            const effortValues = Object.values(dailyEffort as Record<string, number>);
+            const recent3 = effortValues.slice(-3).reduce((a, b) => a + b, 0) / 3;
+            const prev3 = effortValues.slice(-6, -3).reduce((a, b) => a + b, 0) / 3;
+
+            let effortTrendStr = 'STABLE';
+            if (prev3 > 0) {
+                if (recent3 < prev3 * 0.7) effortTrendStr = 'DECLINING';
+                if (recent3 > prev3 * 1.2) effortTrendStr = 'BUILDING';
+            } else if (recent3 > 0) {
+                effortTrendStr = 'BUILDING'; // from 0 to something
+            }
+
+            // 3. Avoidance Pattern
+            const remainingWorkPercent = totalCompleted > 0 ? 100 - executionRate : 100;
+            const avoidancePattern = lateCheckpoints > 2 && remainingWorkPercent > 40 && activeDays < 4;
+
+            // 4. Overcommitment
+            const overloaded = planned.count > 15 && executionRate < 40 && (7 - activeDays) > 2;
+
+            // 5. Recovery Strong
+            const recoveryStrong = (overduePending.count + recovered.count) > 0 && recovered.count > 0 && recoveryRate >= 50;
+
+            // Classify State
+            let behavioralState: BehavioralState = BehavioralState.STABLE;
+
+            if (disciplineScore > 80 && (activeDays / 7) >= 0.8) {
+                behavioralState = BehavioralState.HIGH_PERFORMER;
+            } else if (disciplineTrend <= -5 && effortTrendStr === 'DECLINING') {
+                behavioralState = BehavioralState.MOMENTUM_DECLINING;
+            } else if (avoidancePattern) {
+                behavioralState = BehavioralState.AVOIDANCE_MODE;
+            } else if (overloaded) {
+                behavioralState = BehavioralState.OVERLOADED;
+            } else if (recoveryStrong) {
+                behavioralState = BehavioralState.RESILIENT_FIGHTER;
+            } else if (disciplineTrend >= 5 || effortTrendStr === 'BUILDING') {
+                behavioralState = BehavioralState.MOMENTUM_BUILDING;
+            } else if (disciplineTrend === 0 && effortTrendStr === 'STABLE' && executionRate < 50) {
+                behavioralState = BehavioralState.STAGNATING;
+            }
+
             const existing = await prisma.userInsightSnapshot.findFirst({
                 where: { userId, dreamId: null, weekStart: weekStartDate },
             });
@@ -341,7 +393,7 @@ export class AnalyticsService {
             if (existing) {
                 snapshot = await prisma.userInsightSnapshot.update({
                     where: { id: existing.id },
-                    data: updatePayload,
+                    data: { ...updatePayload, behavioralState },
                 });
             } else {
                 snapshot = await prisma.userInsightSnapshot.create({
@@ -355,6 +407,7 @@ export class AnalyticsService {
                         avgDailyProgress: 0,
                         avgProgressLatencyHours: 0,
                         dailyStatus: {},
+                        behavioralState,
                         ...updatePayload,
                     },
                 });
