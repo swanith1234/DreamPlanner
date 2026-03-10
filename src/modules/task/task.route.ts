@@ -36,6 +36,10 @@ router.post('/:taskId/checkpoints/:checkpointId/progress', (req: Request, res: R
   taskController.updateCheckpointProgress(req, res).catch(next);
 });
 
+router.delete('/:taskId/checkpoints/:checkpointId', (req: Request, res: Response, next: NextFunction) => {
+  taskController.deleteCheckpoint(req, res).catch(next);
+});
+
 router.post('/:taskId/block', (req: Request, res: Response, next: NextFunction) => {
   taskController.block(req, res).catch(next);
 });

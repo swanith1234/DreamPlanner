@@ -8,6 +8,7 @@ import taskRoutes from './modules/task/task.route';
 import notificationRoutes from './modules/notification/notification.route';
 import userRoutes from './modules/user/user.route';
 import analyticsRoutes from './modules/analytics/analytics.route';
+import chatRoutes from './modules/chat/chat.route';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 
@@ -62,6 +63,7 @@ export function createApp(): Express {
   app.use('/api/notifications', notificationRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/analytics', analyticsRoutes);
+  app.use('/api/chat', chatRoutes);
 
   // Global error handler
   app.use(errorHandler);

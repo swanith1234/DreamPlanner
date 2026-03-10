@@ -114,13 +114,18 @@ export class NotificationDispatcher {
     try {
       const { notification, user, task } = data;
 
+      const metadata = notification.metadata ? (typeof notification.metadata === 'string' ? JSON.parse(notification.metadata) : notification.metadata) : {};
+
       await pushService.sendPushNotification(user.id, {
         title: 'IgniteMate',
         body: notification.message,
         icon: '/pwa-192x192.png',
+        actions: metadata.pushActions || [],
         data: {
           url: task ? `/app/tasks/${task.id}` : '/app/home',
-          notificationId: notification.id
+          notificationId: notification.id,
+          apiUrl: process.env.API_URL || 'http://localhost:3000',
+          apiPath: metadata.apiPath
         }
       });
 

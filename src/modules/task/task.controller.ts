@@ -109,6 +109,16 @@ export class TaskController {
     }
   }
 
+  async deleteCheckpoint(req: AuthRequest, res: Response) {
+    try {
+      const { taskId, checkpointId } = req.params;
+      const result = await taskService.deleteCheckpoint(taskId, checkpointId, req.userId!);
+      res.status(200).json(result);
+    } catch (error: any) {
+      res.status(error.statusCode || 500).json({ error: error.message });
+    }
+  }
+
   async get(req: AuthRequest, res: Response) {
     try {
       const { taskId } = req.params;

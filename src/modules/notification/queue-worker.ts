@@ -35,10 +35,11 @@ export class NotificationQueueWorker {
         async (job) => await this.processJob(job),
         {
           connection: redisClient,
-          // Process 10 jobs concurrently
           concurrency: 10,
           // Worker name for monitoring
           name: 'notification-processor',
+          // Optimize for serverless/Upstash Redis
+         
         }
       );
 

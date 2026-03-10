@@ -216,13 +216,17 @@ export class NotificationWorker {
       let metadata: any = undefined;
 
       if (type === 'REMINDER' && task && task.status !== 'COMPLETED') {
+        let apiPath = `/api/tasks/${taskId}/progress`;
+        if (currentCheckpoint) {
+          apiPath = `/api/tasks/${taskId}/checkpoints/${currentCheckpoint.id}/progress`;
+        }
+
         metadata = {
-          actions: [
-            { label: "10%", api: `POST /tasks/${taskId}/progress`, value: 10 },
-            { label: "25%", api: `POST /tasks/${taskId}/progress`, value: 25 },
-            { label: "50%", api: `POST /tasks/${taskId}/progress`, value: 50 },
-            { label: "Skip for now", api: null }
-          ]
+          pushActions: [
+            { action: "add_25", title: "Add Progress" },
+            { action: "mark_done", title: "Mark Done" }
+          ],
+          apiPath
         };
       }
 

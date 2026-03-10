@@ -46,7 +46,7 @@ export async function initializeNotificationQueue(): Promise<void> {
           },
           // Keep failed jobs for inspection
           removeOnFail: false,
-        },
+        }
       }
     );
 
