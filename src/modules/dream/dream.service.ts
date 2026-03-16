@@ -150,7 +150,7 @@ export class DreamService {
         motivationStatement: input.motivationStatement,
         deadline,
         impactScore: input.impactScore,
-        status: DreamStatus.DRAFT,
+        status: DreamStatus.ACTIVE, // Default to ACTIVE instead of DRAFT per user request
       },
     });
 
@@ -173,8 +173,8 @@ export class DreamService {
       throw new NotFoundError('Dream');
     }
 
-    if (dream.status !== DreamStatus.DRAFT) {
-      throw new ValidationError('Can only validate DRAFT dreams');
+    if (dream.status !== DreamStatus.DRAFT && dream.status !== DreamStatus.ACTIVE) {
+      throw new ValidationError('Can only validate DRAFT or ACTIVE dreams');
     }
 
     const validation = await dreamValidator.validateDreamContent(
@@ -210,8 +210,8 @@ export class DreamService {
       throw new NotFoundError('Dream');
     }
 
-    if (dream.status !== DreamStatus.DRAFT) {
-      throw new ValidationError('Can only confirm DRAFT dreams');
+    if (dream.status !== DreamStatus.DRAFT && dream.status !== DreamStatus.ACTIVE) {
+      throw new ValidationError('Can only confirm DRAFT or ACTIVE dreams');
     }
 
     // Update dream status and checkpoints

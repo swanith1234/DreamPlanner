@@ -375,6 +375,25 @@ export class TaskService {
       orderBy: { deadline: 'asc' },
     });
   }
+
+  async searchTasks(userId: string, query: string, status?: string): Promise<any[]> {
+    return prisma.task.findMany({
+      where: {
+        userId,
+        ...(status && { status: status as TaskStatus }),
+        OR: [
+          { title: { contains: query, mode: 'insensitive' } },
+          { description: { contains: query, mode: 'insensitive' } },
+        ],
+      },
+      include: {
+        checkpoints: { orderBy: { orderIndex: 'asc' } },
+        dream: { select: { title: true, id: true } },
+      },
+      orderBy: { deadline: 'asc' },
+      take: 10,
+    });
+  }
 }
 
 export const taskService = new TaskService();

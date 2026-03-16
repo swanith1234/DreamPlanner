@@ -2,6 +2,8 @@
 import { logger } from '../../utils/logger';
 import { notificationService } from './notification.service';
 import { notificationScheduler } from './notification.scheduler';
+import { notificationDispatcher } from './dispatcher';
+import prisma from '../../config/database';
 
 export class NotificationWorker {
   private pollInterval = 60 * 1000; // 1 minute (60 seconds)
@@ -266,6 +268,7 @@ export class NotificationWorker {
 
       // STEP 4: Send notification
       await this.sendNotification({
+        notificationId: id,
         userId,
         taskId,
         message: messageText,
@@ -320,6 +323,7 @@ export class NotificationWorker {
    * Send notification (MVP: console log)
    */
   private async sendNotification(options: {
+    notificationId: string;
     userId: string;
     taskId?: string;
     message: string;
@@ -327,29 +331,48 @@ export class NotificationWorker {
     scheduledAt: Date;
     metadata?: any;
   }): Promise<void> {
-    const { userId, taskId, message, type, scheduledAt, metadata } = options;
+    const { notificationId, userId, taskId, message, type, scheduledAt, metadata } = options;
 
-    // MVP: Console log (Chat Style)
-    console.log(`\n---------------------------------------------------`);
-    console.log(`[CHAT NOTIFICATION] To: ${userId}`);
-    console.log(`[${type}] ${message}`);
-    if (metadata && metadata.actions) {
-      console.log(`[ACTIONS]: ${metadata.actions.map((a: any) => `[${a.label}]`).join(' ')}`);
+    try {
+      // Fetch full notification object for dispatcher
+      const notification = await prisma.notification.findUnique({
+        where: { id: notificationId },
+        include: { user: true, task: true, dream: true }
+      });
+
+      if (!notification) {
+        throw new Error(`Notification ${notificationId} not found`);
+      }
+
+      // Dispatch to all channels (Web Push, WebSocket, and CHAT HISTORY)
+      const dispatchResult = await notificationDispatcher.dispatch({
+        notification,
+        user: notification.user,
+        task: notification.task,
+        dream: notification.dream
+      });
+
+      if (!dispatchResult.success) {
+        throw new Error(`Dispatch failed: ${dispatchResult.errors.join(', ')}`);
+      }
+
+      await logger.info(
+        'notification',
+        `[DISPATCHED] ${type}: ${message}`,
+        {
+          userId,
+          notificationId,
+          channels: 'all'
+        },
+        userId
+      );
+    } catch (error: any) {
+      await logger.error('notification', 'Dispatch failed in worker', {
+        error: error.message,
+        notificationId
+      });
+      // Don't throw, let the worker continue
     }
-    console.log(`---------------------------------------------------\n`);
-
-    // Log to database
-    await logger.info(
-      'notification',
-      `[SEND] ${type}: ${message}`,
-      {
-        userId,
-        taskId,
-        scheduledAt: scheduledAt.toISOString(),
-        hasActions: !!metadata
-      },
-      userId
-    );
   }
 }
 

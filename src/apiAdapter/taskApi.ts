@@ -103,4 +103,11 @@ export const taskApi = {
         );
         return data;
     },
+
+    async searchTasks(token: string, query: string, status?: string) {
+        const params: Record<string, string> = { q: query };
+        if (status) params.status = status;
+        const { data } = await axios.get(`${BASE}/api/tasks/search`, { headers: headers(token), params });
+        return data;
+    },
 };

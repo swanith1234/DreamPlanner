@@ -112,6 +112,20 @@ export class NotificationWebSocketServer {
             }
         });
     }
+
+    /**
+     * Check if a user has at least one active WebSocket connection
+     */
+    public hasActiveClients(userId: string): boolean {
+        const userClients = this.clients.get(userId);
+        if (!userClients || userClients.size === 0) return false;
+        
+        let hasOpen = false;
+        userClients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) hasOpen = true;
+        });
+        return hasOpen;
+    }
 }
 
 export const notificationWS = new NotificationWebSocketServer();

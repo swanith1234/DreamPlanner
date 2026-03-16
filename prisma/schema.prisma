@@ -95,7 +95,8 @@ model User {
   pushSubscriptions PushSubscription[]
   insightSnapshots  UserInsightSnapshot[]
   generatedInsights GeneratedInsight[]
-  days Day[]
+  days              Day[]
+  chatMessages      ChatMessage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -455,4 +456,24 @@ model Day {
 
   @@unique([userId, checkpointId, date])
   @@index([userId, date])
+}
+
+///////////////////////
+// AI CHAT MEMORY
+///////////////////////
+
+model ChatMessage {
+  id          String   @id @default(uuid())
+  userId      String
+  role        String   // 'user' | 'assistant' | 'tool' | 'system'
+  content     String?  @db.Text
+  toolCalls   Json?    // Groq tool_calls array (for role='assistant' with tools)
+  toolCallId  String?  // for role='tool' responses (links back to assistant tool_calls)
+  metadata    Json?    // optional: intent hints, tokens used, etc.
+  readAt      DateTime? // ✅ when the message was seen by the recipient
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }

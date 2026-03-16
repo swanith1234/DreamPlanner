@@ -1,165 +1,189 @@
 // src/ai/contextBuilder.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Assembles the user context object injected into every LLM prompt.
-// Tier 1 (always) is cached in Redis for 5 minutes to avoid hammering the DB.
-// Tier 2 = last 8 messages (from chat:history:{userId}).
-// Tier 3 = dynamic, intent-specific queries (not cached).
+// Builds a personalized CONTEXT block injected into the system prompt.
+// Results are cached in Redis for 2 minutes per user to avoid redundant
+// API calls on every chat message (4 HTTP calls → 0 on cache hit).
+//
+// Fetched data:
+//   • User name + motivation tone
+//   • Active / draft dreams (up to 4)
+//   • PENDING / IN_PROGRESS tasks (up to 5, with their active checkpoint)
+//   • Current week dashboard analytics (discipline score, state, consistency)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import Redis from 'ioredis';
-import { env } from '../config/env';
 import { userApi } from '../apiAdapter/userApi';
 import { dreamApi } from '../apiAdapter/dreamApi';
-import { analyticsApi } from '../apiAdapter/analyticsApi';
 import { taskApi } from '../apiAdapter/taskApi';
+import { analyticsApi } from '../apiAdapter/analyticsApi';
+import { logger } from '../utils/logger';
+import Redis from 'ioredis';
+import { env } from '../config/env';
 
-// Safe initialization to prevent Upstash limit crash
-let redis: Redis | any = { get: async () => null, set: async () => null, del: async () => null };
+// ── Redis client (graceful no-op if unavailable) ─────────────────────────────
 
+const CONTEXT_TTL = 120; // seconds — 2 minutes
+
+let redis: any = {
+    get: async () => null,
+    set: async () => null,
+    del: async () => null,
+};
 try {
     const rawRedis = new Redis(env.redis.url, {
         maxRetriesPerRequest: 1,
-        retryStrategy: () => null // do not auto reconnect 
+        retryStrategy: () => null,
     });
-    rawRedis.on('error', () => { /* Suppress error explicitly without logging to prevent crash loop */ });
+    rawRedis.on('error', () => { /* suppress */ });
     redis = rawRedis;
-} catch (e) {
-    // Fallback to fake client
-}
+} catch { /* fallback to mock */ }
 
-const CTX_TTL_SECONDS = 300;    // 5 minutes
-const HISTORY_TTL_SECONDS = 1800; // 30 minutes
-const MAX_HISTORY_MESSAGES = 8;
-
-function ctxKey(userId: string) { return `chat:ctx:${userId}`; }
-function historyKey(userId: string) { return `chat:history:${userId}`; }
-
-export interface ChatMessage {
-    role: 'user' | 'assistant';
-    content: string;
+function contextCacheKey(userId: string) {
+    return `ctx:${userId}`;
 }
 
 export interface UserContext {
-    userName: string;
+    name: string;
     motivationTone: string;
-    activeDreams: { id: string; title: string }[];
-    currentWeek: {
-        disciplineScore: number;
-        consistencyScore: number;
-        behavioralState: string;
-    } | null;
-    activeCheckpoints: any[];
-    history: ChatMessage[];
+    contextBlock: string; // Injected into system prompt
 }
 
-export const contextBuilder = {
+/** Truncate a string to max N chars for compact injection. */
+function trunc(s: string | undefined | null, max = 60): string {
+    if (!s) return '';
+    return s.length > max ? s.slice(0, max) + '…' : s;
+}
 
-    // ── Build full context for a message ─────────────────────────────────────
+/** Format a date as "MMM DD YYYY" for human readability. */
+function fmtDate(d: string | Date | undefined): string {
+    if (!d) return 'no deadline';
+    try {
+        return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    } catch {
+        return String(d).slice(0, 10);
+    }
+}
 
-    async build(userId: string, token: string): Promise<UserContext> {
-        const [tier1, history] = await Promise.all([
-            contextBuilder._getTier1(userId, token),
-            contextBuilder.getHistory(userId),
-        ]);
-        return { ...tier1, history };
-    },
+export async function buildUserContext(token: string, userId: string): Promise<UserContext> {
 
-    // ── Tier 1: cached snapshot ───────────────────────────────────────────────
-
-    async _getTier1(userId: string, token: string) {
-        let cached: string | null = null;
-        try { cached = await redis.get(ctxKey(userId)); } catch { /* Redis unavailable */ }
+    // ── Cache-first: return early if we have a fresh context ─────────────────
+    try {
+        const cached = await redis.get(contextCacheKey(userId));
         if (cached) {
-            try { return JSON.parse(cached); } catch { /* fall through */ }
+            await logger.info('context-builder', `[CACHE HIT] userId=${userId.slice(0, 8)}`, {});
+            return JSON.parse(cached) as UserContext;
         }
+    } catch { /* Redis unavailable, continue */ }
 
-        // Fetch in parallel — failures are soft (return nulls, not crashes)
-        // NOTE: No status filter on dreams — we want ALL active/confirmed/draft dreams,
-        //       not just finalized ones (user may have newly created dreams).
-        const [prefsResult, dreamsResult, dashboardResult, tasksResult] =
-            await Promise.allSettled([
-                userApi.getPreferences(token),
-                dreamApi.listDreams(token),           // No status filter: include DRAFT, CONFIRMED, ACTIVE
-                analyticsApi.getDashboard(token),
-                taskApi.listTasks(token, undefined, 'IN_PROGRESS'),
-            ]);
+    // ── Parallel fetch ────────────────────────────────────────────────────────
+    const [prefs, dreams, tasks, dashboard] = await Promise.allSettled([
+        userApi.getPreferences(token),
+        dreamApi.listDreams(token),          // all dreams, we filter below
+        taskApi.listTasks(token),             // all tasks, we filter below
+        analyticsApi.getDashboard(token),
+    ]);
 
-        const prefs = prefsResult.status === 'fulfilled' ? prefsResult.value : null;
-        const dreamsData = dreamsResult.status === 'fulfilled' ? dreamsResult.value : null;
-        const dashboard = dashboardResult.status === 'fulfilled' ? dashboardResult.value : null;
-        const tasksData = tasksResult.status === 'fulfilled' ? tasksResult.value : null;
+    // ── Extract prefs ─────────────────────────────────────────────────────────
+    const prefsData = prefs.status === 'fulfilled' ? prefs.value : null;
+    const name: string = prefsData?.name || prefsData?.user?.name || 'there';
+    const motivationTone: string = prefsData?.motivationTone || 'NEUTRAL';
 
-        // Resolve userName from preferences (name is on the User model, not prefs)
-        // We store it in preferences response via the API — fall back gracefully
-        const userName = prefs?.name || 'there';
-        const motivationTone = prefs?.motivationTone || 'NEUTRAL';
-
-        const activeDreams: { id: string; title: string }[] = Array.isArray(dreamsData?.dreams)
-            ? dreamsData.dreams.map((d: any) => ({ id: d.id, title: d.title }))
-            : [];
-
-        const currentWeek = dashboard
-            ? {
-                disciplineScore: dashboard.disciplineScore ?? 0,
-                consistencyScore: dashboard.consistencyScore ?? 0,
-                behavioralState: dashboard.behavioralState ?? 'STABLE',
-            }
-            : null;
-
-        // Active checkpoints = all IN_PROGRESS tasks with their checkpoint arrays
-        const activeCheckpoints: any[] = [];
-        const tasks = tasksData?.tasks ?? [];
-        for (const task of tasks) {
-            if (Array.isArray(task.checkpoints)) {
-                const active = task.checkpoints.find((cp: any) => cp.isActive);
-                if (active) {
-                    activeCheckpoints.push({
-                        taskId: task.id,
-                        taskTitle: task.title,
-                        checkpointId: active.id,
-                        checkpointTitle: active.title,
-                        progress: active.progress,
-                        targetDate: active.targetDate,
-                    });
-                }
-            }
+    // ── Extract + filter dreams ───────────────────────────────────────────────
+    let dreamLines = '';
+    if (dreams.status === 'fulfilled') {
+        const allDreams: any[] = Array.isArray(dreams.value)
+            ? dreams.value
+            : (dreams.value?.dreams ?? []);
+        const activeDreams = allDreams
+            .filter((d: any) => ['ACTIVE', 'DRAFT'].includes(d.status))
+            .slice(0, 4);
+        if (activeDreams.length === 0) {
+            dreamLines = '  (no active dreams yet)\n';
+        } else {
+            dreamLines = activeDreams.map((d: any) =>
+                `  • [${d.status}] "${trunc(d.title, 55)}" — due ${fmtDate(d.deadline)} (id: ${d.id})`
+            ).join('\n') + '\n';
         }
+    } else {
+        dreamLines = '  (could not load dreams)\n';
+        await logger.warn('context-builder', 'Failed to fetch dreams', {});
+    }
 
-        const snapshot = { userName, motivationTone, activeDreams, currentWeek, activeCheckpoints };
+    // ── Extract + filter tasks ────────────────────────────────────────────────
+    let taskLines = '';
+    if (tasks.status === 'fulfilled') {
+        const allTasks: any[] = Array.isArray(tasks.value)
+            ? tasks.value
+            : (tasks.value?.tasks ?? []);
+        const activeTasks = allTasks
+            .filter((t: any) => ['PENDING', 'IN_PROGRESS'].includes(t.status))
+            .sort((a: any, b: any) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
+            .slice(0, 5);
 
-        // ⚠️ Only cache if we actually got real data (prefs resolved and user name found).
-        // This prevents caching the "0 dreams" result when the JWT cookie hadn't reached
-        // the backend yet (unauthenticated API calls return empty arrays).
-        const hasRealData = prefsResult.status === 'fulfilled' && !!prefs;
-        if (hasRealData) {
-            try {
-                await redis.set(ctxKey(userId), JSON.stringify(snapshot), 'EX', CTX_TTL_SECONDS);
-            } catch { /* Redis unavailable — continue without caching */ }
+        if (activeTasks.length === 0) {
+            taskLines = '  (no active tasks yet)\n';
+        } else {
+            taskLines = activeTasks.map((t: any) => {
+                const progress = t.progress ?? 0;
+                const checkpoints: any[] = t.checkpoints ?? [];
+                // Find the active (first incomplete) checkpoint
+                const activeCP = checkpoints
+                    .filter((cp: any) => !cp.isCompleted)
+                    .sort((a: any, b: any) => a.orderIndex - b.orderIndex)[0];
+                const cpNote = activeCP
+                    ? ` | next checkpoint: "${trunc(activeCP.title, 40)}" by ${fmtDate(activeCP.targetDate)}`
+                    : '';
+                return `  • [${t.status}] "${trunc(t.title, 50)}" — ${progress}% done, due ${fmtDate(t.deadline)}${cpNote} (id: ${t.id})`;
+            }).join('\n') + '\n';
         }
-        return snapshot;
-    },
+    } else {
+        taskLines = '  (could not load tasks)\n';
+        await logger.warn('context-builder', 'Failed to fetch tasks', {});
+    }
 
-    // ── Chat history ──────────────────────────────────────────────────────────
+    // ── Extract dashboard analytics ───────────────────────────────────────────
+    let analyticsLine = '';
+    if (dashboard.status === 'fulfilled') {
+        const d = dashboard.value;
+        const disc = d?.disciplineScore ?? d?.currentWeek?.disciplineScore ?? '?';
+        const cons = d?.consistencyScore ?? d?.currentWeek?.consistencyScore ?? '?';
+        const state = d?.behavioralState ?? d?.currentWeek?.behavioralState ?? 'UNKNOWN';
+        analyticsLine = `  Discipline: ${disc}/100 | Consistency: ${cons}/100 | State: ${state}\n`;
+    } else {
+        analyticsLine = '  (analytics not available)\n';
+    }
 
-    async getHistory(userId: string): Promise<ChatMessage[]> {
-        let raw: string | null = null;
-        try { raw = await redis.get(historyKey(userId)); } catch { /* Redis unavailable */ }
-        if (!raw) return [];
-        try { return JSON.parse(raw) as ChatMessage[]; } catch { return []; }
-    },
+    // ── Build the context block ───────────────────────────────────────────────
+    const contextBlock = `
+═══ USER CONTEXT (pre-loaded — use this, do NOT call tools to re-fetch these) ═══
+Name: ${name}
+Motivation tone: ${motivationTone}
 
-    async appendHistory(userId: string, message: ChatMessage): Promise<void> {
-        const history = await contextBuilder.getHistory(userId);
-        history.push(message);
-        const trimmed = history.slice(-MAX_HISTORY_MESSAGES);
-        try {
-            await redis.set(historyKey(userId), JSON.stringify(trimmed), 'EX', HISTORY_TTL_SECONDS);
-        } catch { /* Redis unavailable — history not persisted for this turn */ }
-    },
+DREAMS:
+${dreamLines}
+ACTIVE TASKS:
+${taskLines}
+THIS WEEK'S ANALYTICS:
+${analyticsLine}═══════════════════════════════════════════════════════════`;
 
-    // ── Invalidate tier 1 cache after a write operation ───────────────────────
+    await logger.info('context-builder', `[CACHE MISS] Context built for ${name} — dreams: ${dreamLines.split('\n').filter(Boolean).length}, tasks: ${taskLines.split('\n').filter(Boolean).length}`, {});
 
-    async invalidateContextCache(userId: string): Promise<void> {
-        try { await redis.del(ctxKey(userId)); } catch { /* Redis unavailable */ }
-    },
-};
+    const result: UserContext = { name, motivationTone, contextBlock };
+
+    // ── Cache the result for 2 minutes ────────────────────────────────────────
+    try {
+        await redis.set(contextCacheKey(userId), JSON.stringify(result), 'EX', CONTEXT_TTL);
+    } catch { /* Redis unavailable */ }
+
+    return result;
+}
+
+/**
+ * Invalidate the context cache for a user.
+ * Call this after any write operation (createTask, completeDream etc.) so the
+ * agent picks up fresh data on the very next message.
+ */
+export async function invalidateContextCache(userId: string): Promise<void> {
+    try {
+        await redis.del(contextCacheKey(userId));
+    } catch { /* Redis unavailable */ }
+}

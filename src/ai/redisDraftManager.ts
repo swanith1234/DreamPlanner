@@ -1,85 +1,118 @@
 // src/ai/redisDraftManager.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Manages incomplete AI action drafts in Redis.
-// Uses the ioredis client already wired up via queue.ts / config/env.ts.
+// Temporary conversational state in Redis.
+// ONLY used for multi-step flows that need state between turns:
+//   chat:draft:{userId}            → task/checkpoint creation wizard
+//   chat:checkpointDraft:{userId}  → dream checkpoint editing
+// Permanent chat history is stored in PostgreSQL (ChatMessage model).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Redis from 'ioredis';
 import { env } from '../config/env';
 
-// Safe initialization to prevent Upstash limit crash
-let redis: Redis | any = { get: async () => null, set: async () => null, del: async () => null };
+// Safe initialization — gracefully falls back to a no-op mock if Redis is unavailable
+let redis: Redis | any = {
+    get: async () => null,
+    set: async () => null,
+    del: async () => null,
+    expire: async () => null,
+};
 
 try {
     const rawRedis = new Redis(env.redis.url, {
         maxRetriesPerRequest: 1,
-        retryStrategy: () => null // do not auto reconnect 
+        retryStrategy: () => null, // no auto-reconnect
     });
-    rawRedis.on('error', () => { /* Suppress limit error */ });
+    rawRedis.on('error', () => { /* suppress */ });
     redis = rawRedis;
-} catch (e) {
-    // Fallback
+} catch {
+    // fallback to mock
 }
 
-const DRAFT_TTL_SECONDS = 600; // 10 minutes
+const DRAFT_TTL = 600; // 10 minutes
 
-export type DraftStatus =
-    | 'COLLECTING_PARAMS'        // still gathering required fields
-    | 'AWAITING_CHECKPOINT_CONFIRM'  // checkpoint list presented, waiting for user edit/confirm
-    | 'AWAITING_CONFIRMATION'    // full summary shown, waiting for "yes"
-    | 'EXECUTING';               // API call in flight (prevents double-submit)
+// ── Interfaces ────────────────────────────────────────────────────────────────
 
-export interface ChatDraft {
-    intent: string;
-    parameters: Record<string, any>;
-    missingFields: string[];
-    suggestedCheckpoints?: any[];
-    status: DraftStatus;
-    originalMessage: string;
+/** Stores suggested checkpoints during multi-step task or dream creation flows */
+export interface CheckpointDraft {
+    suggestedCheckpoints: {
+        title: string;
+        targetDate: string;  // YYYY-MM-DD
+        orderIndex: number;
+        description?: string;
+        expectedEffort?: number;
+        miniDeadline?: string;
+    }[];
+    /** Task params collected so far (for CREATE_TASK wizard) */
+    taskParams?: Record<string, any>;
+    /** Dream ID (for CONFIRM_DREAM flow) */
+    dreamId?: string;
+    /** Whether this is for a task or dream */
+    flowType: 'task' | 'dream';
     createdAt: number;
-    // ── Context-switch abort state ────────────────────────────────────────────
-    // Set when the user appears to be changing the subject while a draft is open.
-    // The orchestrator will ask the user to confirm before aborting the draft.
-    isAwaitingAbortConfirmation?: boolean;
-    pendingContextSwitchMessage?: string;
 }
 
-function draftKey(userId: string): string {
+// ── Key helpers ───────────────────────────────────────────────────────────────
+
+function draftKey(userId: string) {
     return `chat:draft:${userId}`;
 }
 
+function checkpointDraftKey(userId: string) {
+    return `chat:checkpointDraft:${userId}`;
+}
+
+// ── Checkpoint Draft (multi-step wizard state) ────────────────────────────────
+
 export const redisDraftManager = {
-    async saveDraft(userId: string, draft: ChatDraft): Promise<void> {
+    // Checkpoint draft — used during task/dream creation to hold suggested steps
+    async saveCheckpointDraft(userId: string, draft: CheckpointDraft): Promise<void> {
         try {
-            await redis.set(draftKey(userId), JSON.stringify(draft), 'EX', DRAFT_TTL_SECONDS);
-        } catch { /* Redis unavailable — draft not persisted */ }
+            await redis.set(checkpointDraftKey(userId), JSON.stringify(draft), 'EX', DRAFT_TTL);
+        } catch { /* Redis unavailable */ }
     },
 
-    async getDraft(userId: string): Promise<ChatDraft | null> {
-        let raw: string | null = null;
-        try { raw = await redis.get(draftKey(userId)); } catch { return null; }
-        if (!raw) return null;
+    async getCheckpointDraft(userId: string): Promise<CheckpointDraft | null> {
         try {
-            return JSON.parse(raw) as ChatDraft;
+            const raw = await redis.get(checkpointDraftKey(userId));
+            if (!raw) return null;
+            return JSON.parse(raw) as CheckpointDraft;
         } catch {
             return null;
         }
     },
 
-    async updateDraft(userId: string, patch: Partial<ChatDraft>): Promise<void> {
-        const existing = await redisDraftManager.getDraft(userId);
+    async updateCheckpointDraft(userId: string, patch: Partial<CheckpointDraft>): Promise<void> {
+        const existing = await redisDraftManager.getCheckpointDraft(userId);
         if (!existing) return;
-        const updated: ChatDraft = { ...existing, ...patch };
+        const updated = { ...existing, ...patch };
         try {
-            await redis.set(draftKey(userId), JSON.stringify(updated), 'EX', DRAFT_TTL_SECONDS);
+            await redis.set(checkpointDraftKey(userId), JSON.stringify(updated), 'EX', DRAFT_TTL);
         } catch { /* Redis unavailable */ }
+    },
+
+    async deleteCheckpointDraft(userId: string): Promise<void> {
+        try { await redis.del(checkpointDraftKey(userId)); } catch { /* Redis unavailable */ }
+    },
+
+    // Generic draft key — reserved for any future wizard extension
+    async saveDraft(userId: string, data: Record<string, any>): Promise<void> {
+        try {
+            await redis.set(draftKey(userId), JSON.stringify(data), 'EX', DRAFT_TTL);
+        } catch { /* Redis unavailable */ }
+    },
+
+    async getDraft(userId: string): Promise<Record<string, any> | null> {
+        try {
+            const raw = await redis.get(draftKey(userId));
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch {
+            return null;
+        }
     },
 
     async deleteDraft(userId: string): Promise<void> {
         try { await redis.del(draftKey(userId)); } catch { /* Redis unavailable */ }
-    },
-
-    async refreshTTL(userId: string): Promise<void> {
-        try { await redis.expire(draftKey(userId), DRAFT_TTL_SECONDS); } catch { /* Redis unavailable */ }
     },
 };

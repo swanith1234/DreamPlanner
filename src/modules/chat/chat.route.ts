@@ -11,4 +11,12 @@ router.post('/', (req: Request, res: Response, next: NextFunction) => {
     chatController.sendMessage(req as any, res).catch(next);
 });
 
+router.get('/history', (req: Request, res: Response, next: NextFunction) => {
+    chatController.getHistory(req as any, res).catch(next);
+});
+
+router.patch('/seen', (req: Request, res: Response, next: NextFunction) => {
+    chatController.markAsSeen(req as any, res).catch(next);
+});
+
 export default router;

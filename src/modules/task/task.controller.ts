@@ -142,6 +142,24 @@ export class TaskController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  async search(req: AuthRequest, res: Response) {
+    try {
+      const { q, status } = req.query;
+      if (!q || typeof q !== 'string') {
+        res.status(400).json({ error: 'Query parameter "q" is required' });
+        return;
+      }
+      const tasks = await taskService.searchTasks(
+        req.userId!,
+        q,
+        status as string | undefined,
+      );
+      res.status(200).json({ tasks });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
 }
 
 export const taskController = new TaskController();

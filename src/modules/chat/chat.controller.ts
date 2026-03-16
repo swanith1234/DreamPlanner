@@ -8,6 +8,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../../types';
 import { orchestrator } from '../../ai/orchestrator';
 import { logger } from '../../utils/logger';
+import { chatService } from './chat.service';
 
 export const chatController = {
     async sendMessage(req: AuthRequest, res: Response): Promise<void> {
@@ -40,6 +41,31 @@ export const chatController = {
         } catch (error: any) {
             await logger.error('chat', 'Chat controller error', { error: error.message });
             res.status(500).json({ error: 'Something went wrong. Please try again.' });
+        }
+    },
+
+    async getHistory(req: AuthRequest, res: Response): Promise<void> {
+        try {
+            const userId = req.userId!;
+            const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+            const beforeMs = req.query.before ? parseInt(req.query.before as string) : undefined;
+            
+            const history = await chatService.getChatHistory(userId, limit, beforeMs);
+            res.status(200).json(history);
+        } catch (error: any) {
+            await logger.error('chat', 'Get history error', { error: error.message });
+            res.status(500).json({ error: 'Could not fetch chat history.' });
+        }
+    },
+
+    async markAsSeen(req: AuthRequest, res: Response): Promise<void> {
+        try {
+            const userId = req.userId!;
+            await chatService.markAsRead(userId);
+            res.status(200).json({ success: true });
+        } catch (error: any) {
+            await logger.error('chat', 'Mark as seen error', { error: error.message });
+            res.status(500).json({ error: 'Could not mark messages as seen.' });
         }
     },
 };

@@ -44,6 +44,10 @@ router.post('/:taskId/block', (req: Request, res: Response, next: NextFunction) 
   taskController.block(req, res).catch(next);
 });
 
+router.get('/search', (req: Request, res: Response, next: NextFunction) => {
+  taskController.search(req, res).catch(next);
+});
+
 router.get('/:taskId', (req: Request, res: Response, next: NextFunction) => {
   taskController.get(req, res).catch(next);
 });

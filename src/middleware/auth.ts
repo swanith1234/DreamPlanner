@@ -10,6 +10,8 @@ export const authMiddleware = (
 ) => {
   try {
     const token = req.cookies?.accessToken;
+    // DEBUG: log cookie presence to trace why refresh drops auth
+    console.log(`[AuthMiddleware] req.path=${req.path}, hasToken=${!!token}`);
 
     if (!token) {
       return res.status(401).json({ error: 'Missing or invalid token' });

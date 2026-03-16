@@ -4,6 +4,7 @@ import { emailProvider } from './providers/email.provider';
 import { logger } from '../../utils/logger';
 import { notificationWS } from './websocket.server';
 import { pushService } from './push.service';
+import { chatService } from '../chat/chat.service';
 
 export interface NotificationData {
   notification: Notification;
@@ -44,6 +45,12 @@ export class NotificationDispatcher {
       // ── Real-Time WebSocket (in-memory, always attempt) ───────────────────────
       await this.dispatchRealTime(data);
       anyChannelSucceeded = true; // WS send is fire-and-forget, always count as attempted
+
+      // ── Save to Chat History ──────────────────────────────────────────────────
+      await chatService.saveMessage(data.user.id, 'assistant', data.notification.message, null, null, {
+          notificationId: data.notification.id,
+          type: data.notification.type
+      });
 
       // Succeed if at least one delivery channel worked (WS or push).
       // Email-only failure should NOT fail the job — email is supplementary.
