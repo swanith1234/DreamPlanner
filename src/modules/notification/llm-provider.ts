@@ -63,33 +63,33 @@ export async function generateNotificationMessageWithLLM(
       Today: today || null,
     };
 
-    const prompt = `
-You are IgniteMate's performance agent.
-You speak according to the user's selected motivation tone.
-You DO NOT compute metrics.
-You interpret structured performance data and generate a short, powerful notification (max 120 words).
-Your objective:
-Trigger action.
-Reference real performance data.
-Avoid generic motivation.
-Tie message to user's dream "why."
-Mention consequences of inaction when tone requires it.
-Mention progress improvement when earned.
-Never fabricate metrics.
-Use only provided data.
+    const systemPrompt = `You are IgniteMate's performance agent.
+You speak according to the user's selected motivation tone (NEUTRAL, FRIENDLY, HARSH, ANALYTICAL).
+Your objective: Trigger action by interpreting structured performance data.
+Reference real metrics (discipline score, active days, etc.).
+Tie the message to the user's dream and their "why".
+Mention consequences of inaction when the tone is HARSH.
 
-INPUT STRUCTURE (Dynamic):
-${JSON.stringify(contextPayload, null, 2)}
-`;
+RESPONSE RULES:
+- ONLY output the notification message text.
+- NO preamble (e.g., "Based on the data...").
+- NO headers, NO JSON, NO explanations.
+- Max 100 words.`;
 
-    const message = await groq.chat.completions.create({
+    const userPrompt = `DATA:
+${JSON.stringify(contextPayload, null, 2)}`;
+
+    const response = await groq.chat.completions.create({
       model: GROQ_MODEL,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
       temperature: 0.7,
       max_tokens: 150,
     });
 
-    const generatedMessage = message.choices[0]?.message?.content?.trim() || '';
+    const generatedMessage = response.choices[0]?.message?.content?.trim() || '';
 
     if (!generatedMessage) {
       return getDefaultMessage(notificationType);
