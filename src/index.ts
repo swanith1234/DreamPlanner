@@ -21,13 +21,13 @@ async function start() {
     // await emailProvider.initialize();
     await logger.info('server', 'Email provider initialized');
 
-    // Initialize BullMQ notification queue (DISABLED FOR REDIS LIMITS)
-    // await initializeNotificationQueue();
-    // await logger.info('server', 'Notification queue initialized');
+    // Initialize BullMQ notification queue
+    await initializeNotificationQueue();
+    await logger.info('server', 'Notification queue initialized');
 
-    // Start notification queue worker (DISABLED FOR REDIS LIMITS)
-    // await notificationQueueWorker.start();
-    // await logger.info('server', 'Notification queue worker started');
+    // Start notification queue worker
+    await notificationQueueWorker.start();
+    await logger.info('server', 'Notification queue worker started');
 
     // Start event worker (domain events) (DISABLED AS REQUESTED)
     // await eventWorker.start();
@@ -59,12 +59,11 @@ process.on('SIGTERM', async () => {
   await logger.info('server', 'SIGTERM received, shutting down gracefully');
 
   // Stop workers
-  // await eventWorker.stop();
-  // await notificationQueueWorker.stop();
+  await notificationQueueWorker.stop();
 
   // Close queue and Redis
-  // await closeNotificationQueue();
-  // await disconnectRedis();
+  await closeNotificationQueue();
+  await disconnectRedis();
 
   // Disconnect database
   await prisma.$disconnect();
@@ -76,12 +75,11 @@ process.on('SIGINT', async () => {
   await logger.info('server', 'SIGINT received, shutting down gracefully');
 
   // Stop workers
-  // await eventWorker.stop();
-  // await notificationQueueWorker.stop();
+  await notificationQueueWorker.stop();
 
   // Close queue and Redis
-  // await closeNotificationQueue();
-  // await disconnectRedis();
+  await closeNotificationQueue();
+  await disconnectRedis();
 
   // Disconnect database
   await prisma.$disconnect();

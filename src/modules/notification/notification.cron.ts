@@ -32,8 +32,34 @@ export async function runNotificationCron() {
 
     if (locked.count === 0) continue;
 
-    await enqueueNotificationJob(notification.id, 0);
-    enqueued++;
+    try {
+      // ── Step 1: Attempt Queue Delivery (Scalable) ──────────────────────────
+      await enqueueNotificationJob(notification.id, 0);
+      enqueued++;
+    } catch (queueError: any) {
+      await logger.warn('cron', 'Queue failed, falling back to direct dispatch', {
+        error: queueError.message,
+        notificationId: notification.id
+      });
+
+      try {
+        // ── Step 2: Direct Fallback (Resilient) ──────────────────────────────
+        await notificationService.processNotification(notification.id);
+        enqueued++;
+      } catch (fallbackError: any) {
+        await logger.error('cron', 'Fallback dispatch also failed. Reverting to SCHEDULED', {
+          error: fallbackError.message,
+          notificationId: notification.id
+        });
+
+        // ── Step 3: Safety Guard ───────────────────────────────────────────
+        // Revert status so it can be picked up by the next cron run
+        await prisma.notification.update({
+          where: { id: notification.id },
+          data: { status: NotificationStatus.SCHEDULED }
+        });
+      }
+    }
   }
 
   // Check Schedule Progress Prompts

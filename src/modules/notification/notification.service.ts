@@ -7,6 +7,8 @@ import { User, Task, NotificationStatus } from '@prisma/client';
 
 import { eventService } from '../event/event.service';
 import { pushService } from './push.service';
+import { generateNotificationMessageWithLLM } from './llm-provider';
+import { notificationDispatcher } from './dispatcher';
 
 export class NotificationService {
   /**
@@ -441,6 +443,164 @@ export class NotificationService {
 
     } catch (error: any) {
       await logger.error('notification', 'Failed to check daily progress', { error: error.message });
+    }
+  }
+
+  /**
+   * Process a single notification (Shared by BullMQ worker and Sync Fallback)
+   */
+  async processNotification(notificationId: string, attempt: number = 0): Promise<void> {
+    try {
+      // STEP 1: Fetch notification
+      const notification = await prisma.notification.findUnique({
+        where: { id: notificationId },
+        include: {
+          user: {
+            include: { preferences: true }
+          },
+          task: {
+            include: { checkpoints: true }
+          },
+          dream: true,
+        },
+      });
+
+      if (!notification) {
+        await logger.warn('notification', 'Notification not found for processing', { notificationId });
+        return;
+      }
+
+      // STEP 2: Check if already processed (idempotency)
+      if (notification.status !== NotificationStatus.PROCESSING) {
+        await logger.info(
+          'notification',
+          'Notification skipping: status is not PROCESSING',
+          { notificationId, status: notification.status }
+        );
+        return;
+      }
+
+      // STEP 2.5: JIT Content Generation (LLM)
+      if (notification.type === 'REMINDER' && notification.user.preferences) {
+        try {
+          const now = new Date();
+          // Lazy load services to avoid cyclic dependencies
+          const { analyticsService } = require('../analytics/analytics.service');
+          const { subDays } = require('date-fns');
+
+          let currentSprintDashboard = null;
+          let pastSnapshot = null;
+
+          try {
+            currentSprintDashboard = await analyticsService.computeDashboard(notification.userId, now);
+            const sprintStr = currentSprintDashboard?.sprintWindow?.start || now.toISOString().split('T')[0];
+            const prevWeekStart = subDays(new Date(sprintStr + 'T12:00:00Z'), 7);
+            pastSnapshot = await prisma.userInsightSnapshot.findFirst({
+              where: { userId: notification.userId, dreamId: null, weekStart: prevWeekStart }
+            });
+          } catch (e) {
+            // Fallback if analytics fails
+          }
+
+          const currentCheckpoint = notification.task?.checkpoints?.find((c: any) => !c.isCompleted);
+
+          const llmMessage = await generateNotificationMessageWithLLM({
+            notificationType: 'REMINDER',
+            userTone: notification.user.preferences.motivationTone,
+
+            userIdentity: {
+              dreamTitle: notification.dream?.title || 'Your Dream',
+              motivationStatement: notification.dream?.motivationStatement || 'Keep pushing forward.',
+              deadlineInDays: notification.dream?.deadline ? Math.round((new Date(notification.dream.deadline).getTime() - now.getTime()) / 86400000) : 30,
+              tone: notification.user.preferences.motivationTone,
+            },
+
+            currentSprint: currentSprintDashboard ? {
+              disciplineScore: currentSprintDashboard.scores.disciplineScore,
+              activeDays: `${currentSprintDashboard.activity.activeDays}/7`,
+              lateCheckpoints: currentSprintDashboard.checkpoints.recovered.count + currentSprintDashboard.checkpoints.overduePending.count,
+              overdueTasks: currentSprintDashboard.checkpoints.overduePending.count,
+              currentStreak: 0,
+              effortTrend: 'N/A',
+              remainingWorkPercent: currentSprintDashboard.checkpoints.planned.count > 0
+                ? Math.round(100 - currentSprintDashboard.rates.executionRate) : 0,
+              behavioralState: 'LIVE_COMPUTING',
+            } : undefined,
+
+            pastSprint: pastSnapshot ? {
+              disciplineScore: pastSnapshot.disciplineScore,
+              disciplineTrend: 'N/A',
+              behavioralState: pastSnapshot.behavioralState || 'STABLE',
+            } : undefined,
+
+            today: {
+              checkpointTitle: currentCheckpoint?.title || notification.task?.title || 'Daily Focus',
+              currentProgress: notification.task?.progressPercent || 0,
+              target: 100,
+              isBehindSchedule: false,
+              hoursLeftToday: Math.max(0, 24 - now.getHours()),
+            }
+          });
+
+          if (llmMessage) {
+            notification.message = llmMessage;
+            await prisma.notification.update({
+              where: { id: notificationId },
+              data: { message: llmMessage }
+            });
+          }
+        } catch (err: any) {
+          console.error('JIT LLM generation failed, using original message:', err.message);
+        }
+      }
+
+      // STEP 3: Dispatch notification
+      const dispatchResult = await notificationDispatcher.dispatch({
+        notification,
+        user: (notification as any).user,
+        task: (notification as any).task || undefined,
+        dream: (notification as any).dream || undefined,
+      });
+
+      // STEP 4: Update DB based on dispatch result
+      if (dispatchResult.success) {
+        await prisma.notification.update({
+          where: { id: notificationId },
+          data: { status: NotificationStatus.SENT }
+        });
+
+        await logger.info(
+          'notification',
+          'Notification sent successfully',
+          { notificationId, userId: notification.userId },
+          notification.userId
+        );
+
+        // STEP 5: Schedule next reminder (if applicable)
+        if (notification.taskId && notification.type === 'REMINDER') {
+          await this.scheduleNextReminder(
+            notification.userId,
+            notification.taskId,
+            notification.dreamId!,
+            notification.task!.deadline!
+          );
+        }
+      } else {
+        // Mark as FAILED (will be retried if BullMQ is used)
+        await prisma.notification.update({
+          where: { id: notificationId },
+          data: { status: NotificationStatus.FAILED }
+        });
+
+        throw new Error(dispatchResult.errors.join('; '));
+      }
+    } catch (error: any) {
+      await logger.error(
+        'notification',
+        'Failed to process notification',
+        { error: error.message, notificationId, attempt }
+      );
+      throw error;
     }
   }
 }
