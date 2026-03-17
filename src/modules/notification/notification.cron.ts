@@ -1,5 +1,4 @@
 import prisma from '../../config/database';
-import { enqueueNotificationJob } from './queue';
 import { NotificationStatus } from '@prisma/client';
 import { logger } from '../../utils/logger';
 
@@ -18,57 +17,46 @@ export async function runNotificationCron() {
     take: 100, // batch protection
   });
 
-  for (const notification of dueNotifications) {
-    // atomic lock
-    const locked = await prisma.notification.updateMany({
-      where: {
-        id: notification.id,
-        status: NotificationStatus.SCHEDULED,
-      },
-      data: {
-        status: NotificationStatus.PROCESSING,
-      },
-    });
-
-    if (locked.count === 0) continue;
-
-    try {
-      // ── Step 1: Attempt Queue Delivery (Scalable) ──────────────────────────
-      await enqueueNotificationJob(notification.id, 0);
-      enqueued++;
-    } catch (queueError: any) {
-      await logger.warn('cron', 'Queue failed, falling back to direct dispatch', {
-        error: queueError.message,
-        notificationId: notification.id
+  const results = await Promise.allSettled(
+    dueNotifications.map(async (notification) => {
+      // atomic lock
+      const locked = await prisma.notification.updateMany({
+        where: {
+          id: notification.id,
+          status: NotificationStatus.SCHEDULED,
+        },
+        data: {
+          status: NotificationStatus.PROCESSING,
+        },
       });
 
+      if (locked.count === 0) return;
+
       try {
-        // ── Step 2: Direct Fallback (Resilient) ──────────────────────────────
         await notificationService.processNotification(notification.id);
         enqueued++;
-      } catch (fallbackError: any) {
-        await logger.error('cron', 'Fallback dispatch also failed. Reverting to SCHEDULED', {
-          error: fallbackError.message,
+      } catch (err: any) {
+        await logger.error('cron', 'Failed to dispatch notification', {
+          error: err.message,
           notificationId: notification.id
         });
 
-        // ── Step 3: Safety Guard ───────────────────────────────────────────
-        // Revert status so it can be picked up by the next cron run
+        // Revert status on failure
         await prisma.notification.update({
           where: { id: notification.id },
           data: { status: NotificationStatus.SCHEDULED }
         });
       }
-    }
-  }
+    })
+  );
 
   // Check Schedule Progress Prompts
   await notificationService.checkDailyProgress();
 
   await logger.info('cron', 'Notification cron executed', {
     scanned: dueNotifications.length,
-    enqueued,
+    processed: enqueued,
   });
 
-  return { scanned: dueNotifications.length, enqueued };
+  return { scanned: dueNotifications.length, processed: enqueued };
 }
