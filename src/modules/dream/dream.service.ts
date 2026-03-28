@@ -5,10 +5,27 @@ import {
   CreateDreamRequest,
   UpdateDreamRequest,
   ConfirmDreamRequest,
+  SyncDreamStateRequest,
+  SyncDreamStateResponse,
 } from './dream.dto';
 import { NotFoundError, ValidationError } from '../../utils/errors';
 import { DreamStatus, TaskStatus, NotificationStatus } from '@prisma/client';
 import { eventService } from '../event/event.service';
+import { roadmapService } from '../roadmap/roadmap.service';
+import Redis from 'ioredis';
+import { env } from '../../config/env';
+
+// ── Dream Draft Redis (stateful slot-filling across turns) ────────────────────
+let dreamDraftRedis: any = {
+  get: async () => null,
+  set: async () => null,
+  del: async () => null,
+};
+try {
+  const r = new Redis(env.redis.url, { maxRetriesPerRequest: 1, retryStrategy: () => null });
+  r.on('error', () => { /* suppress */ });
+  dreamDraftRedis = r;
+} catch { /* fallback to no-op */ }
 
 export class DreamService {
   async updateDream(
@@ -146,10 +163,14 @@ export class DreamService {
       data: {
         userId,
         title: input.title,
+        domain: input.domain,
+        targetGoal: input.targetGoal,
+        currentSkillLevel: input.currentSkillLevel,
         description: input.description,
         motivationStatement: input.motivationStatement,
         deadline,
-        impactScore: input.impactScore,
+        impactScore: input.impactScore ?? 5,
+        additionalContext: input.additionalContext,
         status: DreamStatus.ACTIVE, // Default to ACTIVE instead of DRAFT per user request
       },
     });
@@ -160,6 +181,11 @@ export class DreamService {
       { dreamId: dream.id, title: input.title },
       userId
     );
+
+    // Generate Roadmap Draft in background
+    roadmapService.generate(userId, dream.id).catch(err => {
+      logger.error('dream', 'Automatic roadmap generation failed (draft)', { dreamId: dream.id, error: err.message });
+    });
 
     return dream;
   }
@@ -242,15 +268,11 @@ export class DreamService {
       deadline: updatedDream.deadline.toISOString(),
     });
 
-    await logger.info(
-      'dream',
-      'Dream confirmed and activated',
-      {
-        dreamId: updatedDream.id,
-        checkpointsCount: updatedDream.checkpoints.length,
-      },
-      userId
-    );
+    // Generate Roadmap Draft in background (don't block the main dream confirmation)
+    // Actually, user wants it "suggested", so we generate it now.
+    roadmapService.generate(userId, updatedDream.id).catch(err => {
+      logger.error('dream', 'Automatic roadmap generation failed', { dreamId: updatedDream.id, error: err.message });
+    });
 
     return updatedDream;
   }
@@ -314,6 +336,171 @@ export class DreamService {
     await logger.info('dream', 'Dream failed', { dreamId }, userId);
 
     return updated;
+  }
+
+  async searchDreams(
+    userId: string,
+    keyword?: string,
+    status?: string
+  ): Promise<any[]> {
+    const where: any = { userId };
+
+    if (status) {
+      where.status = status as DreamStatus;
+    } else {
+      // Default to ACTIVE and DRAFT for search to keep LLM context clean
+      where.status = { in: [DreamStatus.ACTIVE, DreamStatus.DRAFT] };
+    }
+
+    if (keyword) {
+      where.OR = [
+        { title: { contains: keyword, mode: 'insensitive' } },
+        { domain: { contains: keyword, mode: 'insensitive' } },
+        { targetGoal: { contains: keyword, mode: 'insensitive' } },
+      ];
+    }
+
+    return prisma.dream.findMany({
+      where,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        deadline: true,
+        domain: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+  }
+
+  async syncDreamState(
+    userId: string,
+    input: SyncDreamStateRequest
+  ): Promise<SyncDreamStateResponse> {
+
+    // ── 1. Load existing draft from Redis ──────────────────────────────────
+    const DRAFT_KEY = `dream:draft:${userId}`;
+    let draft: Record<string, any> = {};
+    try {
+      const raw = await dreamDraftRedis.get(DRAFT_KEY);
+      if (raw) draft = JSON.parse(raw);
+    } catch { /* Redis unavailable — start fresh */ }
+
+    // ── 2. Reset draft if user is starting a NEW dream (different title) ───
+    if (input.title && draft.title && input.title.toLowerCase() !== draft.title.toLowerCase()) {
+      draft = {}; // clear stale draft, start fresh
+      await logger.info('dream', 'Dream draft reset — new title detected', { userId }, userId);
+    }
+
+    // ── 3. Merge any non-null fields from this call into the draft ─────────
+    const FIELDS = ['title', 'domain', 'targetGoal', 'currentSkillLevel', 'deadline', 'motivationStatement', 'impactScore', 'additionalContext'] as const;
+    for (const field of FIELDS) {
+      const val = (input as any)[field];
+      if (val !== null && val !== undefined && val !== '') {
+        draft[field] = val;
+      }
+    }
+
+    // ── 3. Persist updated draft ───────────────────────────────────────────
+    try {
+      await dreamDraftRedis.set(DRAFT_KEY, JSON.stringify(draft), 'EX', 1800); // 30 min TTL
+    } catch { /* Redis unavailable */ }
+
+    // ── 4. Check which required fields are still missing or invalid ───────
+    const REQUIRED = ['title', 'domain', 'targetGoal', 'currentSkillLevel', 'deadline', 'motivationStatement'] as const;
+    const missingFields = REQUIRED.filter(f => !draft[f]);
+
+    // Handle initial field collection
+    if (missingFields.length > 0) {
+      const [nextField] = missingFields;
+      const fieldLabels: Record<string, string> = {
+        title: 'the name of this dream',
+        domain: 'the domain or field',
+        targetGoal: 'the specific, measurable goal',
+        currentSkillLevel: 'your current skill level',
+        deadline: 'the target deadline (YYYY-MM-DD)',
+        motivationStatement: 'your emotional motivation',
+      };
+      return {
+        status: 'INCOMPLETE',
+        missingFields,
+        collected: draft,
+        systemInstruction: `Ask for "${fieldLabels[nextField]}". One short sentence only.`,
+      };
+    }
+
+    // ── 5. Data Type Validation (Deadline) ───────────────────────────────
+    const deadlineDate = new Date(draft.deadline);
+    if (isNaN(deadlineDate.getTime())) {
+      return {
+        status: 'INCOMPLETE',
+        missingFields: ['deadline'],
+        collected: draft,
+        systemInstruction: 'The deadline provided is invalid. Please ask for a specific date in YYYY-MM-DD format.',
+      };
+    }
+
+    // ── 6. Intent Validation (The "Real Dream" Check) ────────────────────
+    const validation = await dreamValidator.validateDreamContent(
+      draft.title,
+      draft.targetGoal, // Use targetGoal as the description for validation
+      deadlineDate,
+      draft.motivationStatement
+    );
+
+    if (!validation.isValid) {
+      return {
+        status: 'INVALID',
+        collected: draft,
+        reason: validation.warnings[0] || "This goal seems a bit vague or unrealistic.",
+        warnings: validation.warnings,
+        systemInstruction: "Explain why it's invalid (politely) and ask the user to refine the dream details.",
+      };
+    }
+
+    // ── 7. Confirmation Gate ─────────────────────────────────────────────
+    if (!input.confirmed) {
+      return {
+        status: 'PENDING_CONFIRMATION',
+        collected: draft,
+        warnings: validation.warnings,
+        suggestedCheckpoints: validation.suggestedCheckpoints,
+        systemInstruction: "ALL FIELDS COLLECTED AND VALID. Summarize the dream and checkpoints, then ASK: 'Should I create this dream now?' Do NOT create until they say yes.",
+      };
+    }
+
+    // ── 8. Final Creation ────────────────────────────────────────────────
+    // Clear the draft
+    try { await dreamDraftRedis.del(DRAFT_KEY); } catch { /* ignore */ }
+
+    const dream = await prisma.dream.create({
+      data: {
+        userId,
+        title: draft.title,
+        domain: draft.domain,
+        targetGoal: draft.targetGoal,
+        currentSkillLevel: draft.currentSkillLevel,
+        description: draft.targetGoal, 
+        motivationStatement: draft.motivationStatement,
+        deadline: deadlineDate,
+        impactScore: draft.impactScore || 5,
+        additionalContext: draft.additionalContext,
+        status: DreamStatus.ACTIVE,
+      },
+    });
+
+    await logger.info('dream', 'Dream created via syncDreamState (Confirmed)', { dreamId: dream.id }, userId);
+
+    // Trigger roadmap generation
+    const roadmap = await roadmapService.generate(userId, dream.id);
+
+    return {
+      status: 'COMPLETE',
+      dreamId: dream.id,
+      roadmap,
+      systemInstruction: 'Dream and roadmap created. Tell the user it is setup and ask if they want to see the roadmap.',
+    };
   }
 }
 

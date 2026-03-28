@@ -15,6 +15,11 @@ function headers(token: string) {
 
 export const dreamApi = {
 
+    async syncDreamState(token: string, body: any) {
+        const { data } = await axios.post(`${BASE}/api/dreams/sync`, body, { headers: headers(token) });
+        return data;
+    },
+
     async createDraft(token: string, body: {
         title: string;
         description: string;
@@ -81,6 +86,14 @@ export const dreamApi = {
         const params: Record<string, string> = {};
         if (status) params.status = status;
         const { data } = await axios.get(`${BASE}/api/dreams`, { headers: headers(token), params });
+        return data;
+    },
+
+    async searchDreams(token: string, keyword?: string, status?: string) {
+        const params: Record<string, string> = {};
+        if (keyword) params.keyword = keyword;
+        if (status) params.status = status;
+        const { data } = await axios.get(`${BASE}/api/dreams/search`, { headers: headers(token), params });
         return data;
     },
 };

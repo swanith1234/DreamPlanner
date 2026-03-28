@@ -17,14 +17,27 @@ export const openRouter = new OpenAI({
   }
 });
 
-// Tertiary Provider: Fast fallback for open-source models
-export const togetherAi = new OpenAI({
-  apiKey: env.ai.togetherApiKey,
-  baseURL: 'https://api.together.xyz/v1',
+
+// New Fast Providers
+export const deepseek = new OpenAI({
+  apiKey: env.ai.deepseekApiKey,
+  baseURL: 'https://api.deepseek.com',
+});
+
+export const cerebras = new OpenAI({
+  apiKey: env.ai.cerebrasApiKey,
+  baseURL: 'https://api.cerebras.ai/v1',
+});
+
+export const sambanova = new OpenAI({
+  apiKey: env.ai.sambanovaApiKey,
+  baseURL: 'https://api.sambanova.ai/v1',
 });
 
 // Export default model names
 export const GROQ_MODEL = env.ai.groqModel;
-export const OPENROUTER_CHEAP_MODEL = 'meta-llama/llama-3.1-8b-instruct:free';
-export const OPENROUTER_COMPLEX_MODEL = 'anthropic/claude-3.5-haiku'; // Standard model ID
-export const TOGETHER_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo';
+export const OPENROUTER_CHEAP_MODEL = 'openai/gpt-4o-mini';
+export const OPENROUTER_COMPLEX_MODEL = 'openai/gpt-4o-2024-08-06';
+export const DEEPSEEK_MODEL = 'deepseek-chat';
+export const CEREBRAS_MODEL = 'llama-3.3-70b';
+export const SAMBANOVA_MODEL = 'Meta-Llama-3.3-70B-Instruct';

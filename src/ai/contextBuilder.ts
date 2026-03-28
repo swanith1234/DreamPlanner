@@ -15,13 +15,14 @@ import { userApi } from '../apiAdapter/userApi';
 import { dreamApi } from '../apiAdapter/dreamApi';
 import { taskApi } from '../apiAdapter/taskApi';
 import { analyticsApi } from '../apiAdapter/analyticsApi';
+import { roadmapApi } from '../apiAdapter/roadmapApi';
 import { logger } from '../utils/logger';
 import Redis from 'ioredis';
 import { env } from '../config/env';
 
 // ── Redis client (graceful no-op if unavailable) ─────────────────────────────
 
-const CONTEXT_TTL = 120; // seconds — 2 minutes
+const CONTEXT_TTL = 30; // seconds — 30 seconds (short to minimize stale data)
 
 let redis: any = {
     get: async () => null,
@@ -43,6 +44,8 @@ function contextCacheKey(userId: string) {
 
 export interface UserContext {
     name: string;
+    preferredName?: string;
+    agentName?: string;
     motivationTone: string;
     contextBlock: string; // Injected into system prompt
 }
@@ -74,100 +77,31 @@ export async function buildUserContext(token: string, userId: string): Promise<U
         }
     } catch { /* Redis unavailable, continue */ }
 
-    // ── Parallel fetch ────────────────────────────────────────────────────────
-    const [prefs, dreams, tasks, dashboard] = await Promise.allSettled([
+    // ── Parallel fetch (ONLY Identity/Prefs) ──────────────────────────────────
+    const [prefs] = await Promise.allSettled([
         userApi.getPreferences(token),
-        dreamApi.listDreams(token),          // all dreams, we filter below
-        taskApi.listTasks(token),             // all tasks, we filter below
-        analyticsApi.getDashboard(token),
     ]);
 
     // ── Extract prefs ─────────────────────────────────────────────────────────
     const prefsData = prefs.status === 'fulfilled' ? prefs.value : null;
     const name: string = prefsData?.name || prefsData?.user?.name || 'there';
+    const preferredName: string = prefsData?.preferredName || name;
+    const agentName: string = prefsData?.agentName || `Future ${name}`;
     const motivationTone: string = prefsData?.motivationTone || 'NEUTRAL';
 
-    // ── Extract + filter dreams ───────────────────────────────────────────────
-    let dreamLines = '';
-    if (dreams.status === 'fulfilled') {
-        const allDreams: any[] = Array.isArray(dreams.value)
-            ? dreams.value
-            : (dreams.value?.dreams ?? []);
-        const activeDreams = allDreams
-            .filter((d: any) => ['ACTIVE', 'DRAFT'].includes(d.status))
-            .slice(0, 4);
-        if (activeDreams.length === 0) {
-            dreamLines = '  (no active dreams yet)\n';
-        } else {
-            dreamLines = activeDreams.map((d: any) =>
-                `  • [${d.status}] "${trunc(d.title, 55)}" — due ${fmtDate(d.deadline)} (id: ${d.id})`
-            ).join('\n') + '\n';
-        }
-    } else {
-        dreamLines = '  (could not load dreams)\n';
-        await logger.warn('context-builder', 'Failed to fetch dreams', {});
-    }
-
-    // ── Extract + filter tasks ────────────────────────────────────────────────
-    let taskLines = '';
-    if (tasks.status === 'fulfilled') {
-        const allTasks: any[] = Array.isArray(tasks.value)
-            ? tasks.value
-            : (tasks.value?.tasks ?? []);
-        const activeTasks = allTasks
-            .filter((t: any) => ['PENDING', 'IN_PROGRESS'].includes(t.status))
-            .sort((a: any, b: any) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
-            .slice(0, 5);
-
-        if (activeTasks.length === 0) {
-            taskLines = '  (no active tasks yet)\n';
-        } else {
-            taskLines = activeTasks.map((t: any) => {
-                const progress = t.progress ?? 0;
-                const checkpoints: any[] = t.checkpoints ?? [];
-                // Find the active (first incomplete) checkpoint
-                const activeCP = checkpoints
-                    .filter((cp: any) => !cp.isCompleted)
-                    .sort((a: any, b: any) => a.orderIndex - b.orderIndex)[0];
-                const cpNote = activeCP
-                    ? ` | next checkpoint: "${trunc(activeCP.title, 40)}" by ${fmtDate(activeCP.targetDate)}`
-                    : '';
-                return `  • [${t.status}] "${trunc(t.title, 50)}" — ${progress}% done, due ${fmtDate(t.deadline)}${cpNote} (id: ${t.id})`;
-            }).join('\n') + '\n';
-        }
-    } else {
-        taskLines = '  (could not load tasks)\n';
-        await logger.warn('context-builder', 'Failed to fetch tasks', {});
-    }
-
-    // ── Extract dashboard analytics ───────────────────────────────────────────
-    let analyticsLine = '';
-    if (dashboard.status === 'fulfilled') {
-        const d = dashboard.value;
-        const disc = d?.disciplineScore ?? d?.currentWeek?.disciplineScore ?? '?';
-        const cons = d?.consistencyScore ?? d?.currentWeek?.consistencyScore ?? '?';
-        const state = d?.behavioralState ?? d?.currentWeek?.behavioralState ?? 'UNKNOWN';
-        analyticsLine = `  Discipline: ${disc}/100 | Consistency: ${cons}/100 | State: ${state}\n`;
-    } else {
-        analyticsLine = '  (analytics not available)\n';
-    }
-
-    // ── Build the context block ───────────────────────────────────────────────
+    // ── Build the ultra-lean context block ────────────────────────────────────
     const contextBlock = `
-═══ USER CONTEXT (pre-loaded — use this, do NOT call tools to re-fetch these) ═══
-Name: ${name}
-Motivation tone: ${motivationTone}
+USER_IDENTITY:
+You ARE: ${agentName}
+Address the user as: ${preferredName}
+User's Real Name: ${name}
+Motivation Tone: ${motivationTone}
+Current Date: ${new Date().toLocaleDateString('en-IN')}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
-DREAMS:
-${dreamLines}
-ACTIVE TASKS:
-${taskLines}
-THIS WEEK'S ANALYTICS:
-${analyticsLine}═══════════════════════════════════════════════════════════`;
+    await logger.info('context-builder', `[CONTEXT ANNIHILATION] Built lean context for ${name}`, {});
 
-    await logger.info('context-builder', `[CACHE MISS] Context built for ${name} — dreams: ${dreamLines.split('\n').filter(Boolean).length}, tasks: ${taskLines.split('\n').filter(Boolean).length}`, {});
-
-    const result: UserContext = { name, motivationTone, contextBlock };
+    const result: UserContext = { name, preferredName, agentName, motivationTone, contextBlock };
 
     // ── Cache the result for 2 minutes ────────────────────────────────────────
     try {

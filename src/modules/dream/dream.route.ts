@@ -9,12 +9,20 @@ router.post('/', (req: Request, res: Response, next: NextFunction) => {
   dreamController.create(req, res).catch(next);
 });
 
+router.post('/sync', (req: Request, res: Response, next: NextFunction) => {
+  dreamController.sync(req, res).catch(next);
+});
+
 router.post('/:dreamId/validate', (req: Request, res: Response, next: NextFunction) => {
   dreamController.validate(req, res).catch(next);
 });
 
 router.post('/:dreamId/confirm', (req: Request, res: Response, next: NextFunction) => {
   dreamController.confirm(req, res).catch(next);
+});
+
+router.get('/search', (req: Request, res: Response, next: NextFunction) => {
+  dreamController.search(req, res).catch(next);
 });
 
 router.get('/:dreamId', (req: Request, res: Response, next: NextFunction) => {

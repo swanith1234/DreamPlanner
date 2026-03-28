@@ -73,7 +73,8 @@ Mention consequences of inaction when the tone is HARSH.
 RESPONSE RULES:
 - ONLY output the notification message text.
 - NO preamble (e.g., "Based on the data...").
-- NO headers, NO JSON, NO explanations.
+- NO headers, NO JSON, 
+
 - Max 100 words.`;
 
     const userPrompt = `DATA:

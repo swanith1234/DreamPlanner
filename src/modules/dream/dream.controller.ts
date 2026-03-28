@@ -16,6 +16,16 @@ export class DreamController {
     }
   }
 
+  async sync(req: AuthRequest, res: Response) {
+    try {
+      const result = await dreamService.syncDreamState(req.userId!, req.body);
+      res.status(200).json(result);
+    } catch (error: any) {
+      await logger.error('dream', error.message, {}, req.userId);
+      res.status(error.statusCode || 500).json({ error: error.message });
+    }
+  }
+
   async update(req: AuthRequest, res: Response) {
     try {
       const { dreamId } = req.params;
@@ -102,6 +112,20 @@ export class DreamController {
       res.status(200).json(dream);
     } catch (error: any) {
       res.status(error.statusCode || 500).json({ error: error.message });
+    }
+  }
+
+  async search(req: AuthRequest, res: Response) {
+    try {
+      const { keyword, status } = req.query;
+      const dreams = await dreamService.searchDreams(
+        req.userId!,
+        keyword as string | undefined,
+        status as string | undefined
+      );
+      res.status(200).json({ dreams });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   }
 }

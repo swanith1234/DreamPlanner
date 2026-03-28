@@ -10,7 +10,10 @@ export const env = {
     groqApiKey: process.env.GROQ_API_KEY!,
     groqModel: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
     openRouterApiKey: process.env.OPENROUTER_API_KEY!,
-    togetherApiKey: process.env.TOGETHER_API_KEY!,
+    openAiApiKey: process.env.OPENAI_API_KEY || '',
+    deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
+    cerebrasApiKey: process.env.CEREBRAS_API_KEY || '',
+    sambanovaApiKey: process.env.SAMBANOVA_API_KEY || '',
   },
   server: {
     port: parseInt(process.env.PORT || '3000', 10),
@@ -42,7 +45,7 @@ export const env = {
 };
 
 // Validate required env vars
-const requiredVars = ['DATABASE_URL', 'GROQ_API_KEY', 'OPENROUTER_API_KEY', 'TOGETHER_API_KEY', 'JWT_SECRET'];
+const requiredVars = ['DATABASE_URL', 'GROQ_API_KEY', 'OPENROUTER_API_KEY', 'JWT_SECRET'];
 const missing = requiredVars.filter(v => !process.env[v]);
 if (missing.length > 0) {
   throw new Error(`Missing required env vars: ${missing.join(', ')}`);

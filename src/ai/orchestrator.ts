@@ -1,26 +1,20 @@
 // src/ai/orchestrator.ts
 // ─────────────────────────────────────────────────────────────────────────────
 // Native OpenAI-compatible orchestrator for DreamPlanner.
-// Supports Groq, OpenRouter, and TogetherAI via a Priority Fallback Queue.
+// Supports Groq, OpenRouter, DeepSeek, Cerebras, and Sambanova via a Priority Fallback Queue.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { groq, openRouter, togetherAi, GROQ_MODEL, OPENROUTER_CHEAP_MODEL, OPENROUTER_COMPLEX_MODEL, TOGETHER_MODEL } from '../config/ai';
+import { groq, GROQ_MODEL } from '../config/ai';
 import { logger } from '../utils/logger';
 import { chatService } from '../modules/chat/chat.service';
-import { TASK_TOOLS, DREAM_TOOLS, ANALYTICS_TOOLS, USER_TOOLS } from './tools';
+import { TASK_TOOLS, DREAM_TOOLS, ANALYTICS_TOOLS, USER_TOOLS, ROADMAP_TOOLS } from './tools';
 import { executeTool } from './toolExecutor';
 import { buildUserContext, invalidateContextCache } from './contextBuilder';
 import { buildSystemPrompt } from './systemPrompt';
 import { notificationWS } from '../modules/notification/websocket.server';
 import { pushService } from '../modules/notification/push.service';
 
-// Standardized Message Type for internal loop
-type ChatMessage = {
-    role: 'system' | 'user' | 'assistant' | 'tool';
-    content: string | null;
-    tool_calls?: any[];
-    tool_call_id?: string;
-};
+import { executeWithFallback, type ChatMessage } from './llmClient';
 
 // Response returned to the controller
 export interface ChatResponse {
@@ -32,7 +26,7 @@ export interface ChatResponse {
  * Step 1: Zero-Tool Intent Check (Lightweight Pass)
  * Categorizes the request into a bucket so we only send relevant tools.
  */
-async function detectIntent(message: string, history: any[]): Promise<{ intent: 'TASKS' | 'DREAMS' | 'ANALYTICS' | 'USER' | 'CHAT', complexity: 'SIMPLE' | 'COMPLEX' }> {
+async function detectIntent(message: string, history: any[]): Promise<{ intent: 'TASKS' | 'DREAMS' | 'ROADMAP' | 'ANALYTICS' | 'USER' | 'CHAT', complexity: 'SIMPLE' | 'COMPLEX' }> {
     const context = history.slice(-3).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
     
     try {
@@ -41,7 +35,7 @@ async function detectIntent(message: string, history: any[]): Promise<{ intent: 
             messages: [
                 {
                     role: 'system',
-                    content: `Analyze user request. Return JSON: {"intent": "TASKS"|"DREAMS"|"ANALYTICS"|"USER"|"CHAT", "complexity": "SIMPLE"|"COMPLEX"}.
+                    content: `Analyze user request. Return JSON: {"intent": "TASKS"|"DREAMS"|"ROADMAP"|"ANALYTICS"|"USER"|"CHAT", "complexity": "SIMPLE"|"COMPLEX"}.
                     
 CONTEXT:
 ${context}
@@ -61,58 +55,10 @@ REQUEST: ${message}`
             complexity: parsed.complexity === 'COMPLEX' ? 'COMPLEX' : 'SIMPLE'
         };
     } catch {
-        return { intent: 'TASKS', complexity: 'SIMPLE' }; 
+        return { intent: 'TASKS', complexity: 'SIMPLE' }; //what is this when any error occur in detecting the intent..it is simply scheduling to the tasks tool
     }
 }
 
-/**
- * Step 2: Fallback Router
- * Cycles through providers if rate limited or server error occurs.
- */
-async function executeWithFallback(messages: ChatMessage[], tools: any[] | undefined, complexity: 'SIMPLE' | 'COMPLEX', iteration: number) {
-    const groqModel = complexity === 'COMPLEX' ? GROQ_MODEL : 'llama-3.1-8b-instant';
-    const openRouterModel = complexity === 'COMPLEX' ? OPENROUTER_COMPLEX_MODEL : OPENROUTER_CHEAP_MODEL;
-    
-    const providers = [
-        { client: groq, model: groqModel, label: 'Groq' },
-        { client: openRouter, model: openRouterModel, label: 'OpenRouter' },
-        { client: togetherAi, model: TOGETHER_MODEL, label: 'TogetherAI' }
-    ];
-
-    let lastError: any = null;
-
-    for (const provider of providers) {
-        try {
-            const start = Date.now();
-            const response = await provider.client.chat.completions.create({
-                model: provider.model,
-                messages: messages as any[],
-                tools: tools as any[],
-                tool_choice: tools ? 'auto' : 'none',
-                temperature: complexity === 'COMPLEX' ? 0.7 : 0.4,
-                max_tokens: complexity === 'COMPLEX' ? 1500 : 768,
-            });
-            
-            const ms = Date.now() - start;
-            const usage = response.usage;
-            
-            await logger.info('orchestrator', 
-                `[LLM] ok=true provider=${provider.label} iter=${iteration} model=${provider.model} ms=${ms} t=${usage?.total_tokens}`, 
-                {}
-            );
-
-            return response;
-        } catch (error: any) {
-            lastError = error;
-            const status = error.status || error.response?.status || 500;
-            await logger.warn('orchestrator', `[LLM] ok=false provider=${provider.label} iter=${iteration} error=${status}. Falling back...`, { message: error.message });
-            
-            if (status !== 429 && status >= 400 && status < 500) throw error;
-        }
-    }
-
-    throw new Error(`All fallback providers exhausted. Last Error: ${lastError?.message || 'Unknown'}`);
-}
 
 // ── Main Orchestrator ────────────────────────────────────────────────────────
 
@@ -126,6 +72,7 @@ export const orchestrator = {
         // 2. Load context
         let history = await chatService.getConversationWindow(userId, 5);
         let name = 'there', motivationTone = 'NEUTRAL', contextBlock = '';
+    
         try {
             const ctx = await buildUserContext(token, userId);
             name = ctx.name;
@@ -139,7 +86,7 @@ export const orchestrator = {
         const systemMsg: ChatMessage = { role: 'system', content: buildSystemPrompt(contextBlock, motivationTone, name) };
         const { intent, complexity } = await detectIntent(message, history);
         
-        const toolMap: Record<string, any[]> = { TASKS: TASK_TOOLS, DREAMS: DREAM_TOOLS, ANALYTICS: ANALYTICS_TOOLS, USER: USER_TOOLS };
+        const toolMap: Record<string, any[]> = { TASKS: TASK_TOOLS, DREAMS: DREAM_TOOLS, ROADMAP: ROADMAP_TOOLS, ANALYTICS: ANALYTICS_TOOLS, USER: USER_TOOLS };
         const toolSubset = toolMap[intent];
 
         await logger.info('orchestrator', `[INTENT] intent=${intent} complexity=${complexity} tools=${toolSubset?.length || 0}`, {});
@@ -157,7 +104,7 @@ export const orchestrator = {
         for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
             let response: any;
             try {
-                response = await executeWithFallback(messages, toolSubset, complexity, iteration);
+                response = await executeWithFallback(messages, { complexity, tools: toolSubset, max_tokens: 1500 }, iteration);
             } catch (error: any) {
                 await logger.error('orchestrator', 'Fallback Exhausted', { error: error.message });
                 const errText = 'I am having trouble reaching my brain components. Please try again.';
@@ -218,7 +165,7 @@ export const orchestrator = {
                 const WRITE_TOOLS = ['createTask', 'updateTask', 'completeTask', 'blockTask', 'archiveTask',
                     'updateTaskProgress', 'updateCheckpoint', 'updateCheckpointProgress', 'deleteCheckpoint',
                     'createDream', 'updateDream', 'confirmDream', 'completeDream', 'failDream', 'archiveDream',
-                    'updatePreferences', 'updateProfile'];
+                    'syncDreamState', 'updatePreferences', 'updateProfile'];
                 if (WRITE_TOOLS.includes(toolName) && !result?.error) {
                     await invalidateContextCache(userId);
                 }
