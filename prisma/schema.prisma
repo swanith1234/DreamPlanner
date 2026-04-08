@@ -304,6 +304,7 @@ model Milestone {
   difficulty         DifficultyLevel?
   difficultyLevel    Int              @default(3)
   targetUserState    String?
+  parentIds          String[]         @default([])
 
   status      RoadmapNodeStatus @default(PENDING)
   completedAt DateTime?
@@ -769,3 +770,13 @@ model ChatMessage {
 
   @@index([userId, createdAt])
 }
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tableName String
+  operation String
+  recordId  String?
+  metadata  Json?
+  timestamp DateTime @default(now())
+}
+

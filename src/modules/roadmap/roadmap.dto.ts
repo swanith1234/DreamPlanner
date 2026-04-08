@@ -32,6 +32,7 @@ export interface RoadmapDraftPayload {
     difficultyLevel?: number;
     status?: RoadmapNodeStatus;
     targetUserState?: string;
+    parentIds?: string[];
   }>;
 }
 

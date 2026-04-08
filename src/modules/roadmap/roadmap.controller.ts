@@ -113,6 +113,25 @@ export class RoadmapController {
       const updated = await roadmapService.updateSkillStatus(req.userId!, skillId, status);
       res.status(200).json(updated);
     } catch (error: any) {
+    }
+  }
+
+  async addMilestone(req: AuthRequest, res: Response) {
+    try {
+      const { roadmapId } = req.params;
+      const milestone = await roadmapService.addMilestone(req.userId!, roadmapId, req.body);
+      res.status(201).json(milestone);
+    } catch (error: any) {
+      res.status(error.statusCode || 500).json({ error: error.message });
+    }
+  }
+
+  async deleteMilestone(req: AuthRequest, res: Response) {
+    try {
+      const { milestoneId } = req.params;
+      await roadmapService.deleteMilestone(req.userId!, milestoneId);
+      res.status(200).json({ message: 'Milestone deleted' });
+    } catch (error: any) {
       res.status(error.statusCode || 500).json({ error: error.message });
     }
   }

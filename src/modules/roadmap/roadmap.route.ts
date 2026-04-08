@@ -46,5 +46,13 @@ router.patch('/skills/:skillId/status', (req: Request, res: Response, next: Next
   roadmapController.updateSkillStatus(req, res).catch(next);
 });
 
+router.post('/:roadmapId/milestones', (req: Request, res: Response, next: NextFunction) => {
+  roadmapController.addMilestone(req, res).catch(next);
+});
+
+router.delete('/milestones/:milestoneId', (req: Request, res: Response, next: NextFunction) => {
+  roadmapController.deleteMilestone(req, res).catch(next);
+});
+
 export default router;
 

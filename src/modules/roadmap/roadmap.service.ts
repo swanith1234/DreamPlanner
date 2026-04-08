@@ -135,6 +135,7 @@ export class RoadmapService {
           difficulty: (m.difficulty as any) || null,
           difficultyLevel: m.difficultyLevel ?? 3,
           targetUserState: m.targetUserState || '',
+          parentIds: m.parentIds || [],
           status: (m.status as any) || RoadmapNodeStatus.PENDING,
         };
 
@@ -193,6 +194,59 @@ export class RoadmapService {
     return this.getById(userId, roadmapId);
   }
 
+  async addMilestone(userId: string, roadmapId: string, data: any) {
+    const roadmap = await prisma.roadmap.findUnique({ where: { id: roadmapId } });
+    if (!roadmap || roadmap.userId !== userId) throw new NotFoundError('Roadmap');
+
+    let orderIndex = data.orderIndex;
+    if (orderIndex === undefined) {
+      const last = await prisma.milestone.findFirst({
+        where: { roadmapId },
+        orderBy: { orderIndex: 'desc' },
+      });
+      orderIndex = (last?.orderIndex ?? 0) + 1;
+    }
+
+    return prisma.milestone.create({
+      data: {
+        userId,
+        roadmapId,
+        dreamId: roadmap.dreamId,
+        title: data.title || 'New Milestone',
+        description: data.description || '',
+        orderIndex,
+        difficultyLevel: data.difficultyLevel ?? 3,
+        targetUserState: data.targetUserState || '',
+        parentIds: data.parentIds || [],
+        completionCriteria: {},
+        status: RoadmapNodeStatus.PENDING,
+      },
+    });
+  }
+
+  async deleteMilestone(userId: string, milestoneId: string) {
+    const milestone = await prisma.milestone.findUnique({ where: { id: milestoneId } });
+    if (!milestone || milestone.userId !== userId) throw new NotFoundError('Milestone');
+    
+    // Cleanup parent references in other milestones
+    const dependents = await prisma.milestone.findMany({
+      where: { roadmapId: milestone.roadmapId, parentIds: { has: milestoneId } }
+    });
+    
+    for (const dep of dependents) {
+      await prisma.milestone.update({
+        where: { id: dep.id },
+        data: {
+          parentIds: {
+            set: dep.parentIds.filter(id => id !== milestoneId)
+          }
+        }
+      });
+    }
+
+    return prisma.milestone.delete({ where: { id: milestoneId } });
+  }
+
   async updateMilestone(userId: string, milestoneId: string, data: any) {
     const milestone = await prisma.milestone.findUnique({ where: { id: milestoneId } });
     if (!milestone || milestone.userId !== userId) throw new NotFoundError('Milestone');
@@ -202,6 +256,7 @@ export class RoadmapService {
     if (data.description !== undefined) updateData.description = data.description;
     if (data.targetUserState !== undefined) updateData.targetUserState = data.targetUserState;
     if (data.difficultyLevel !== undefined) updateData.difficultyLevel = data.difficultyLevel;
+    if (data.parentIds !== undefined) updateData.parentIds = data.parentIds;
     if (data.status !== undefined) {
       updateData.status = data.status;
       if (data.status === 'IN_PROGRESS' && !milestone.startDate) updateData.startDate = new Date();
