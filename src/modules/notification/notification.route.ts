@@ -35,8 +35,16 @@ router.post('/check-subscription', (req, res, next) => {
   pushController.checkSubscription(req, res).catch(next);
 });
 
+import { testPushHandler } from './test-push.handler';
+
+// ... (other imports)
+
 router.get('/vapid-key', (req, res, next) => {
   pushController.getVapidKey(req, res).catch(next);
+});
+
+router.post('/test-direct', (req: Request, res: Response) => {
+  testPushHandler(req, res);
 });
 
 
