@@ -86,9 +86,7 @@ export class TaskService {
       },
     });
 
-    await notificationService.schedulePreStartReminders(
-      userId, task.id, input.dreamId, new Date(input.startDate || new Date())
-    );
+    // Reminders are now scheduled purely at the Dream-level initialization.
 
     await eventService.publishEvent('task.created', {
       taskId: task.id, dreamId: input.dreamId, userId,

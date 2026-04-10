@@ -12,6 +12,7 @@ import { NotFoundError, ValidationError } from '../../utils/errors';
 import { DreamStatus, TaskStatus, NotificationStatus } from '@prisma/client';
 import { eventService } from '../event/event.service';
 import { roadmapService } from '../roadmap/roadmap.service';
+import { notificationService } from '../notification/notification.service';
 import Redis from 'ioredis';
 import { env } from '../../config/env';
 
@@ -491,6 +492,14 @@ export class DreamService {
     });
 
     await logger.info('dream', 'Dream created via syncDreamState (Confirmed)', { dreamId: dream.id }, userId);
+
+    // Schedule the very first notification cycle tied to this Dream
+    await notificationService.schedulePreStartReminders(
+      userId, 
+      null as any, // Task ID is null
+      dream.id, 
+      dream.createdAt
+    );
 
     // Trigger roadmap generation
     const roadmap = await roadmapService.generate(userId, dream.id);
