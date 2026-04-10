@@ -8,7 +8,7 @@ import { chatService } from '../chat/chat.service';
 
 export interface NotificationData {
   notification: Notification;
-  user: User;
+  user: User & { preferences?: any };
   task?: any;
   dream?: any;
 }
