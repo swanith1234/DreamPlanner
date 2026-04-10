@@ -57,44 +57,32 @@ export class NotificationService {
   }
 
   /**
-   * Schedule pre-start reminders when task is created
-   * Called from task.created event handler
+   * Schedule the initial immediate notification when a Dream is created.
+   * This anchors the Dream to the cron schedule and kicks off the frequency cycle.
    */
   async schedulePreStartReminders(
     userId: string,
-    taskId: string,
+    taskId: string | null,
     dreamId: string,
     startDate: Date
   ): Promise<void> {
     try {
-      // Get user with preferences
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        include: { preferences: true },
+      await this.createNotification(userId, dreamId, taskId, {
+        scheduledAt: new Date(),
+        message: "IgniteMate initialized for this Dream.",
+        type: 'REMINDER', // REMINDER triggers scheduleNextDreamReminder after success
       });
-
-      if (!user?.preferences) {
-        throw new Error('User preferences not found');
-      }
-
-      // Get pre-start reminders
-      const reminders = notificationScheduler.getPreStartReminders(startDate, user);
-
-      // Create each reminder
-      for (const reminder of reminders) {
-        await this.createNotification(userId, dreamId, taskId, reminder);
-      }
 
       await logger.info(
         'notification',
-        `Scheduled ${reminders.length} pre-start reminders`,
-        { taskId, reminders: reminders.length },
+        'Scheduled immediate initial dream notification',
+        { dreamId },
         userId
       );
     } catch (error: any) {
-      await logger.error('notification', 'Failed to schedule pre-start reminders', {
+      await logger.error('notification', 'Failed to schedule initial dream notification', {
         error: error.message,
-        taskId,
+        dreamId,
       });
     }
   }
