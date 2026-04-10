@@ -67,7 +67,7 @@ export class NotificationService {
     startDate: Date
   ): Promise<void> {
     try {
-      await this.createNotification(userId, dreamId, taskId, {
+      const created = await this.createNotification(userId, dreamId, taskId, {
         scheduledAt: new Date(),
         message: "IgniteMate initialized for this Dream.",
         type: 'REMINDER', // REMINDER triggers scheduleNextDreamReminder after success
@@ -79,6 +79,19 @@ export class NotificationService {
         { dreamId },
         userId
       );
+
+      // Bypass cron timer: manually lock and trigger immediate processing
+      const locked = await prisma.notification.updateMany({
+        where: { id: created.id, status: NotificationStatus.SCHEDULED },
+        data: { status: NotificationStatus.PROCESSING },
+      });
+
+      if (locked.count > 0) {
+        // Fire-and-forget
+        this.processNotification(created.id, 0).catch(err => {
+           logger.error('notification', 'Immediate processing fire failed', { error: err.message, notificationId: created.id });
+        });
+      }
     } catch (error: any) {
       await logger.error('notification', 'Failed to schedule initial dream notification', {
         error: error.message,
