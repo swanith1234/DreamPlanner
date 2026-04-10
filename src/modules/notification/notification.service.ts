@@ -154,7 +154,7 @@ export class NotificationService {
         await logger.info(
           'notification',
           'No valid next notification time, stopping reminders',
-          { taskId },
+          { dreamId },
           userId
         );
         return;
