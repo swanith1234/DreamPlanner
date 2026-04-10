@@ -23,6 +23,7 @@ export interface AuthResponse {
     email: string;
     name: string | null;
     timezone: string;
+    preferences?: any;
   };
   accessToken: string;
   refreshToken: string;
