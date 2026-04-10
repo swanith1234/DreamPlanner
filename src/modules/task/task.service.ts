@@ -125,16 +125,45 @@ export class TaskService {
     const task = await prisma.task.findUnique({ where: { id: taskId } });
     if (!task || task.userId !== userId) throw new NotFoundError('Task');
 
+    let newStatus = task.status;
+    let completedAt = task.completedAt;
+
+    if (progress === 100) {
+      newStatus = TaskStatus.COMPLETED;
+      completedAt = completedAt || new Date();
+    } else if (progress > 0) {
+      newStatus = TaskStatus.IN_PROGRESS;
+      completedAt = null;
+    } else {
+      newStatus = TaskStatus.PENDING;
+      completedAt = null;
+    }
+
     const updated = await prisma.task.update({
       where: { id: taskId },
-      data: { progressPercent: progress, lastProgressAt: new Date() },
+      data: { 
+        progressPercent: progress, 
+        status: newStatus,
+        completedAt,
+        lastProgressAt: new Date() 
+      },
     });
 
     await eventService.publishEvent('task.progress_updated', {
       taskId, dreamId: task.dreamId, userId, progress,
     });
 
-    await logger.info('task', 'Task progress updated', { taskId, progress }, userId);
+    if (progress === 100 && task.status !== TaskStatus.COMPLETED) {
+      await eventService.publishEvent('task.completed', {
+        taskId: updated.id, dreamId: task.dreamId, userId,
+        completedAt: updated.completedAt?.toISOString(),
+      });
+      await userEventService.logEvent(userId, UserEventType.TASK_COMPLETED, 'TASK', taskId, {
+        dreamId: task.dreamId
+      });
+    }
+
+    await logger.info('task', 'Task progress and status updated', { taskId, progress, status: newStatus }, userId);
     return updated;
   }
 
