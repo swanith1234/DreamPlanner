@@ -57,30 +57,33 @@ export class PushService {
                 try {
                     // Check if Native FCM Token via our mock key payload
                     if (sub.p256dh === 'NATIVE' || sub.auth === 'NATIVE' || !sub.p256dh) {
-                        const fcmMessage = {
+                        await logger.info('notification', `[FCM] Sending to native device`, { subId: sub.id, token: sub.endpoint.substring(0, 10) + '...' });
+                        
+                        // FCM data values MUST all be strings
+                        const stringData: Record<string, string> = {};
+                        if (payload.data) {
+                            for (const [key, val] of Object.entries(payload.data)) {
+                                stringData[key] = String(val);
+                            }
+                        }
+                        stringData.actionId = 'inline_reply';
+
+                        const fcmMessage: admin.messaging.Message = {
                             token: sub.endpoint,
                             notification: {
-                                title: payload.title || "Agent",
+                                title: payload.title || "IgniteMate",
                                 body: payload.body || "New message"
                             },
-                            data: {
-                                actionId: 'inline_reply',
-                                ...payload.data
-                            },
+                            data: stringData,
                             android: {
                                 notification: {
                                     clickAction: 'inline_reply'
                                 }
                             },
-                            apns: {
-                                payload: {
-                                    aps: {
-                                        category: 'inline_reply'
-                                    }
-                                }
-                            }
                         };
-                        await admin.messaging().send(fcmMessage);
+                        
+                        const response = await admin.messaging().send(fcmMessage);
+                        await logger.info('notification', `[FCM] Send success`, { response });
                     } else {
                         // Standard Web Push
                         const notificationPayload = JSON.stringify(payload);
@@ -95,11 +98,13 @@ export class PushService {
                         await webpush.sendNotification(pushSubscription, notificationPayload);
                     }
                 } catch (error: any) {
+                    await logger.error('notification', `[PUSH FAIL] type=${sub.p256dh === 'NATIVE' ? 'FCM' : 'WebPush'}`, { 
+                        error: error.message, 
+                        code: error.code,
+                        subId: sub.id 
+                    });
                     if (error.statusCode === 410 || error.statusCode === 404 || error.code === 'messaging/registration-token-not-registered') {
-                        // Subscription is gone, delete it
                         await prisma.pushSubscription.delete({ where: { id: sub.id } });
-                    } else {
-                        logger.error('notification', 'Failed to send push to subscription', { error: error.message, subId: sub.id });
                     }
                 }
             });
