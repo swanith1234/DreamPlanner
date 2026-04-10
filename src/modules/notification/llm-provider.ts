@@ -12,6 +12,7 @@ export interface MessageGenerationInput {
     motivationStatement: string;
     deadlineInDays: number;
     tone: string;
+    agentName: string;
   };
 
   statusEvaluation: {
@@ -43,7 +44,7 @@ export async function generateNotificationMessageWithLLM(
       StatusEvaluation: statusEvaluation,
     };
 
-    const systemPrompt = `You are IgniteMate's push notification agent.
+    const systemPrompt = `You are ${userIdentity.agentName}, IgniteMate's push notification agent.
 Your objective is to trigger action immediately based on the StatusEvaluation JSON payload.
 
 CONDITIONAL LOGIC:

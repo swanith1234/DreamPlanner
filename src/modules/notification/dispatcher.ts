@@ -123,7 +123,7 @@ export class NotificationDispatcher {
 
       const metadata = notification.metadata ? (typeof notification.metadata === 'string' ? JSON.parse(notification.metadata) : notification.metadata) : {};
 
-      const agentName = user.preferences?.agentName || 'IgniteMate';
+      const agentName = user.preferences?.agentName || `Future ${user.name || 'you'}`;
 
       await pushService.sendPushNotification(user.id, {
         title: agentName,

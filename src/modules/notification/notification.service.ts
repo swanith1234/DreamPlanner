@@ -520,6 +520,7 @@ export class NotificationService {
               motivationStatement: notification.dream.motivationStatement || 'Keep pushing forward.',
               deadlineInDays: notification.dream.deadline ? Math.round((new Date(notification.dream.deadline).getTime() - now.getTime()) / 86400000) : 30,
               tone: notification.user.preferences.motivationTone,
+              agentName: notification.user.preferences.agentName || `Future ${notification.user.name || 'you'}`,
             },
             statusEvaluation: {
               caseType,
