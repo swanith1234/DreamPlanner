@@ -71,11 +71,12 @@ export const orchestrator = {
 
         // 2. Load context
         let history = await chatService.getConversationWindow(userId, 5);
-        let name = 'there', motivationTone = 'NEUTRAL', contextBlock = '';
+        let name = 'there', motivationTone = 'NEUTRAL', contextBlock = '', agentName = 'IgniteMate';
     
         try {
             const ctx = await buildUserContext(token, userId);
             name = ctx.name;
+            agentName = ctx.agentName || 'IgniteMate';
             motivationTone = ctx.motivationTone;
             contextBlock = ctx.contextBlock;
         } catch (err: any) {
@@ -126,7 +127,7 @@ export const orchestrator = {
                 // WhatsApp Fallback: If no active socket, send push
                 if (!notificationWS.hasActiveClients(userId)) {
                     await pushService.sendPushNotification(userId, {
-                        title: 'IgniteMate Coach',
+                        title: agentName,
                         body: text,
                         data: { url: '/app/home' }
                     }).catch(err => logger.warn('orchestrator', 'Push fallback failed', { err: err.message }));

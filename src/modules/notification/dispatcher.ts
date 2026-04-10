@@ -48,8 +48,8 @@ export class NotificationDispatcher {
 
       // ── Save to Chat History ──────────────────────────────────────────────────
       await chatService.saveMessage(data.user.id, 'assistant', data.notification.message, null, null, {
-          notificationId: data.notification.id,
-          type: data.notification.type
+        notificationId: data.notification.id,
+        type: data.notification.type
       });
 
       // Succeed if at least one delivery channel worked (WS or push).
