@@ -188,6 +188,14 @@ export class DreamService {
       logger.error('dream', 'Automatic roadmap generation failed (draft)', { dreamId: dream.id, error: err.message });
     });
 
+    // Schedule the very first notification cycle tied to this Dream
+    await notificationService.schedulePreStartReminders(
+      userId, 
+      null, 
+      dream.id, 
+      dream.createdAt
+    );
+
     return dream;
   }
 
@@ -269,11 +277,18 @@ export class DreamService {
       deadline: updatedDream.deadline.toISOString(),
     });
 
-    // Generate Roadmap Draft in background (don't block the main dream confirmation)
-    // Actually, user wants it "suggested", so we generate it now.
+    // Trigger roadmap generation
     roadmapService.generate(userId, updatedDream.id).catch(err => {
       logger.error('dream', 'Automatic roadmap generation failed', { dreamId: updatedDream.id, error: err.message });
     });
+
+    // Schedule the very first notification cycle tied to this Dream
+    await notificationService.schedulePreStartReminders(
+      userId, 
+      null, 
+      updatedDream.id, 
+      updatedDream.createdAt
+    );
 
     return updatedDream;
   }
