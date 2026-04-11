@@ -67,6 +67,7 @@ export class PushService {
                             }
                         }
                         stringData.actionId = 'inline_reply';
+                        stringData.click_action = 'inline_reply';
 
                         const fcmMessage: admin.messaging.Message = {
                             token: sub.endpoint,
@@ -80,6 +81,13 @@ export class PushService {
                                     clickAction: 'inline_reply'
                                 }
                             },
+                            apns: {
+                                payload: {
+                                    aps: {
+                                        category: 'inline_reply'
+                                    }
+                                }
+                            }
                         };
                         
                         const response = await admin.messaging().send(fcmMessage);
