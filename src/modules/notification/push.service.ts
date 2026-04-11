@@ -68,22 +68,19 @@ export class PushService {
                         }
                         stringData.actionId = 'inline_reply';
                         stringData.click_action = 'inline_reply';
+                        stringData.title = payload.title || "IgniteMate";
+                        stringData.body = payload.body || "New message";
 
                         const fcmMessage: admin.messaging.Message = {
                             token: sub.endpoint,
-                            notification: {
-                                title: payload.title || "IgniteMate",
-                                body: payload.body || "New message"
-                            },
                             data: stringData,
-                            android: {
-                                notification: {
-                                    clickAction: 'inline_reply'
-                                }
-                            },
                             apns: {
                                 payload: {
                                     aps: {
+                                        alert: {
+                                            title: payload.title || "IgniteMate",
+                                            body: payload.body || "New message"
+                                        },
                                         category: 'inline_reply'
                                     }
                                 }
