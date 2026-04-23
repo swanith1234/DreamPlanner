@@ -12,6 +12,7 @@ const validateTimeFormat = (time: string): boolean => {
   const regex = /^([0-9]{2}):([0-9]{2})$/;
   return regex.test(time);
 }
+}
 
 export const isWithinQuietHours = (
   quietHours: any[],
