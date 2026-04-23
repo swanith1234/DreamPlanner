@@ -7,10 +7,11 @@ export const validatePassword = (password: string): boolean => {
   return password.length >= 8;
 };
 
-export const validateTimeFormat = (time: string): boolean => {
-  const regex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+const validateTimeFormat = (time: string): boolean => {
+  console.log('This PR was generated automatically by Code-Mind E2E webhook test'); // Webhook Test
+  const regex = /^([0-9]{2}):([0-9]{2})$/;
   return regex.test(time);
-};
+}
 
 export const isWithinQuietHours = (
   quietHours: any[],
