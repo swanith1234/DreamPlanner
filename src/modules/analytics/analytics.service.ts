@@ -14,7 +14,7 @@ import { logger } from '../../utils/logger';
 import { startOfWeek, endOfWeek, differenceInDays, startOfDay, format, endOfDay, min, subDays } from 'date-fns';
 import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 import { MotivationTone, UserEventType, BehavioralState } from '@prisma/client';
-import { generateWeeklyInsight } from './analytics.llm';
+import { generateNextSprintPlan, generateWeeklyInsight } from './analytics.llm';
 import { userEventService } from '../event/user-event.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -436,6 +436,58 @@ export class AnalyticsService {
                         consumed: false,
                     },
                 });
+
+                // ── Roadmap-based next sprint plan (if user has an ACTIVE roadmap) ──
+                const activeRoadmap = await prisma.roadmap.findFirst({
+                    where: { userId, status: 'ACTIVE' },
+                    include: {
+                        dream: { select: { title: true } },
+                        milestones: {
+                            orderBy: { orderIndex: 'asc' },
+                            include: { skills: { orderBy: { orderIndex: 'asc' } } }
+                        },
+                    },
+                    orderBy: { updatedAt: 'desc' },
+                });
+
+                if (activeRoadmap) {
+                    const nextMilestone = activeRoadmap.milestones.find(m => m.status !== 'COMPLETED');
+                    const upcomingSkills = (nextMilestone?.skills || [])
+                        .filter(s => s.status !== 'COMPLETED')
+                        .slice(0, 3)
+                        .map(s => ({
+                            title: s.title,
+                            completionCriteria: s.completionCriteria,
+                            difficulty: String(s.difficulty),
+                        }));
+
+                    if (upcomingSkills.length) {
+                        const plan = await generateNextSprintPlan({
+                            userName: user.name || 'User',
+                            tone: user.preferences?.motivationTone ?? MotivationTone.NEUTRAL,
+                            roadmapTitle: activeRoadmap.dream.title,
+                            upcomingMilestoneTitle: nextMilestone?.title,
+                            upcomingSkills,
+                            lastWeekSnapshot: snapshot,
+                        });
+
+                        await prisma.generatedInsight.create({
+                            data: {
+                                userId,
+                                dreamId: activeRoadmap.dreamId,
+                                weekStart: weekStartDate,
+                                insightType: plan.insightType,
+                                evidence: {
+                                    ...plan.evidence,
+                                    narrative: plan.message,
+                                    roadmapId: activeRoadmap.id,
+                                    milestoneId: nextMilestone?.id,
+                                },
+                                consumed: false,
+                            },
+                        });
+                    }
+                }
             }
 
             await logger.info('analytics', 'Weekly snapshot finalized', { userId, weekStart });

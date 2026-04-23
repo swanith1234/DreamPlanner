@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -75,6 +75,56 @@ enum BehavioralState {
 }
 
 ///////////////////////
+// ROADMAP / LEARNING GRAPH
+///////////////////////
+
+enum RoadmapStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum RoadmapSource {
+  AI
+  USER
+}
+
+enum RoadmapNodeStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  REVISION_REQUIRED
+}
+
+enum DifficultyLevel {
+  BASIC
+  PRACTICE
+  INTERMEDIATE
+  ADVANCED
+  MASTERY
+}
+
+enum RoadmapEntityType {
+  MILESTONE
+  SKILL
+}
+
+enum AssessmentStatus {
+  DRAFT
+  IN_PROGRESS
+  PASSED
+  FAILED
+}
+
+enum RevisionStatus {
+  OPEN
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+///////////////////////
 // USER & AUTH
 ///////////////////////
 
@@ -97,6 +147,13 @@ model User {
   generatedInsights GeneratedInsight[]
   days              Day[]
   chatMessages      ChatMessage[]
+  roadmaps          Roadmap[]
+  milestones        Milestone[]
+  skills            Skill[]
+  assessments       Assessment[]
+  revisionItems     RevisionItem[]
+  forecastRuns      ForecastRun[]
+  timeGapEvidence   TimeGapEvidence[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -113,39 +170,41 @@ model UserPreference {
   sleepEnd   String // "06:30"
 
   quietHours Json // [{ "start": "07:00", "end": "09:00" }]
+  
+  agentName     String?
+  preferredName String?
 
   user User @relation(fields: [userId], references: [id])
 
   createdAt DateTime @default(now())
-
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  
-  token     String   @unique
-  deviceInfo String? // Browser/OS info
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  token        String   @unique
+  deviceInfo   String? // Browser/OS info
   lastActiveAt DateTime @default(now())
-  
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  revoked   Boolean  @default(false)
+
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  revoked         Boolean  @default(false)
   replacedByToken String? // For rotation tracking
-  
+
   @@index([userId])
 }
 
 model PushSubscription {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
-  endpoint  String   @unique
-  p256dh    String
-  auth      String
-  
+  endpoint String @unique
+  p256dh   String
+  auth     String
+
   userAgent String?
   createdAt DateTime @default(now())
 
@@ -161,10 +220,14 @@ model Dream {
   userId String
 
   title               String
+  domain              String?
+  targetGoal          String?
+  currentSkillLevel   String?
   description         String
   motivationStatement String? // emotional "why" behind the dream
   deadline            DateTime
   impactScore         Int
+  additionalContext   String?
 
   status DreamStatus @default(DRAFT)
 
@@ -174,8 +237,10 @@ model Dream {
   notifications     Notification[]
   insightSnapshots  UserInsightSnapshot[]
   generatedInsights GeneratedInsight[]
+  roadmaps          Roadmap[]
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
+  forecastRuns      ForecastRun[]
 }
 
 model DreamCheckpoint {
@@ -194,6 +259,234 @@ model DreamCheckpoint {
   createdAt DateTime @default(now())
 }
 
+model Roadmap {
+  id      String @id @default(uuid())
+  userId  String
+  dreamId String
+
+  status RoadmapStatus @default(DRAFT)
+  source RoadmapSource @default(AI)
+
+  generationModel         String?
+  generationPromptVersion String?
+
+  activatedAt DateTime?
+
+  user          User           @relation(fields: [userId], references: [id])
+  dream         Dream          @relation(fields: [dreamId], references: [id], onDelete: Cascade)
+  milestones    Milestone[]
+  assessments   Assessment[]
+  revisionItems RevisionItem[]
+  forecastRuns  ForecastRun[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, dreamId, status])
+}
+
+model Milestone {
+  id        String @id @default(uuid())
+  userId    String
+  roadmapId String
+  dreamId   String?
+
+  orderIndex Int
+  startDate  DateTime?
+  endDate    DateTime?
+
+  title       String
+  description String?
+
+  completionCriteria Json
+  confidence         Int              @default(50) // 0-100
+  estimatedMinutes   Int?
+  difficulty         DifficultyLevel?
+  difficultyLevel    Int              @default(3)
+  targetUserState    String?
+  parentIds          String[]         @default([])
+
+  status      RoadmapNodeStatus @default(PENDING)
+  completedAt DateTime?
+
+  user    User    @relation(fields: [userId], references: [id])
+  roadmap Roadmap @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  skills  Skill[]
+  taskLinks MilestoneTaskLink[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([roadmapId, orderIndex])
+  @@index([userId, status])
+}
+
+model Skill {
+  id          String @id @default(uuid())
+  userId      String
+  milestoneId String
+
+  orderIndex  Int
+  title       String
+  description String?
+
+  completionCriteria Json
+  confidence         Int             @default(50) // 0-100
+  estimatedMinutes   Int?
+  difficulty         DifficultyLevel?
+  difficultyLevel    Int              @default(3)
+  targetUserState    String?
+
+  status      RoadmapNodeStatus @default(PENDING)
+  completedAt DateTime?
+
+  user      User            @relation(fields: [userId], references: [id])
+  milestone Milestone       @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  taskLinks SkillTaskLink[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([milestoneId, orderIndex])
+  @@index([userId, status])
+}
+
+model SkillTaskLink {
+  id      String @id @default(uuid())
+  skillId String
+  taskId  String
+
+  weight Float @default(1)
+
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  task  Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([skillId, taskId])
+  @@index([taskId])
+}
+
+model MilestoneTaskLink {
+  id          String @id @default(uuid())
+  milestoneId String
+  taskId      String
+
+  weight Float @default(1)
+
+  milestone Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  task      Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([milestoneId, taskId])
+  @@index([taskId])
+}
+
+model Assessment {
+  id        String @id @default(uuid())
+  userId    String
+  roadmapId String
+
+  entityType RoadmapEntityType
+  entityId   String
+
+  questionSet     Json
+  rubric          Json
+  minPassingScore Int  @default(100)
+
+  status AssessmentStatus @default(DRAFT)
+
+  user     User                @relation(fields: [userId], references: [id])
+  roadmap  Roadmap             @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  attempts AssessmentAttempt[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, roadmapId, status])
+  @@index([entityType, entityId])
+}
+
+model AssessmentAttempt {
+  id           String @id @default(uuid())
+  assessmentId String
+
+  answers     Json
+  score       Int
+  evidence    Json
+  evaluatedAt DateTime @default(now())
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId, evaluatedAt])
+}
+
+model RevisionItem {
+  id        String @id @default(uuid())
+  userId    String
+  roadmapId String
+
+  entityType RoadmapEntityType
+  entityId   String
+
+  reason  String
+  dueDate DateTime?
+  status  RevisionStatus @default(OPEN)
+
+  user    User    @relation(fields: [userId], references: [id])
+  roadmap Roadmap @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([roadmapId, entityType, entityId])
+}
+
+model ForecastRun {
+  id        String @id @default(uuid())
+  userId    String
+  dreamId   String
+  roadmapId String
+
+  asOfWeekStart DateTime
+  modelVersion  String
+
+  inputs       Json
+  outputs      Json
+  evidenceRefs Json
+
+  user    User    @relation(fields: [userId], references: [id])
+  dream   Dream   @relation(fields: [dreamId], references: [id], onDelete: Cascade)
+  roadmap Roadmap @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, dreamId, asOfWeekStart])
+}
+
+model TimeGapEvidence {
+  id     String @id @default(uuid())
+  userId String
+
+  entityType RoadmapEntityType
+  entityId   String
+
+  fromStatus RoadmapNodeStatus
+  toStatus   RoadmapNodeStatus
+
+  elapsedMinutes Int
+  context        Json
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+}
+
 ///////////////////////
 // TASK
 ///////////////////////
@@ -209,13 +502,15 @@ model Task {
   deadline          DateTime
   estimatedDuration Int?
   priority          Int
-  status            TaskStatus     @default(PENDING)
+  status            TaskStatus      @default(PENDING)
   completedAt       DateTime? // ✅ when task was finished
   progressPercent   Int? // 0–100, nullable
   lastProgressAt    DateTime?
-  user              User           @relation(fields: [userId], references: [id])
-  dream             Dream          @relation(fields: [dreamId], references: [id])
+  user              User            @relation(fields: [userId], references: [id])
+  dream             Dream           @relation(fields: [dreamId], references: [id])
   notifications     Notification[]
+  skillLinks        SkillTaskLink[]
+  milestoneLinks    MilestoneTaskLink[]
 
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
@@ -243,8 +538,8 @@ enum UserEventType {
 ///////////////////////
 
 model TaskCheckpoint {
-  id          String   @id @default(uuid())
-  taskId      String
+  id     String @id @default(uuid())
+  taskId String
 
   title        String
   targetDate   DateTime
@@ -279,14 +574,14 @@ model DomainEvent {
 ///////////////////////
 
 model UserEvent {
-  id         String @id @default(uuid())
-  userId     String
+  id     String @id @default(uuid())
+  userId String
 
-  entityType String   // TASK | CHECKPOINT | NOTIFICATION
+  entityType String // TASK | CHECKPOINT | NOTIFICATION
   entityId   String
 
-  eventType  UserEventType
-  metadata   Json?
+  eventType UserEventType
+  metadata  Json?
 
   createdAt DateTime @default(now())
 
@@ -310,8 +605,8 @@ model Notification {
   scheduledAt DateTime
   sentAt      DateTime? // ✅ when actually sent
   status      NotificationStatus @default(SCHEDULED)
-  
-  metadata    Json?     // ✅ Action buttons (Phase-1)
+
+  metadata Json? // ✅ Action buttons (Phase-1)
 
   retryCount    Int     @default(0)
   failureReason String?
@@ -340,55 +635,52 @@ model AppLog {
   createdAt DateTime @default(now())
 }
 
-
-
-
 model UserInsightSnapshot {
-  id       String @id @default(uuid())
-  userId   String
-  dreamId  String?
+  id      String  @id @default(uuid())
+  userId  String
+  dreamId String?
 
   weekStart DateTime
   weekEnd   DateTime
 
   // Activity
-  activeDays        Int
-  missedDays        Int
-  longestStreak     Int
-  currentStreak     Int
+  activeDays    Int
+  missedDays    Int
+  longestStreak Int
+  currentStreak Int
 
   // Execution
-  totalCheckpointsPlanned    Int
+  totalCheckpointsPlanned   Int
   totalCheckpointsCompleted Int
   lateCheckpoints           Int
   earlyStarts               Int
   overachievementDays       Int
 
   // New: rates & category counts
-  executionRate   Int  @default(0)   // 0–100
-  recoveryRate    Int  @default(0)   // 0–100
-  intensityScore  Int  @default(0)   // 0–100
-  overduePending  Int  @default(0)
-  recovered       Int  @default(0)
+  executionRate  Int @default(0) // 0–100
+  recoveryRate   Int @default(0) // 0–100
+  intensityScore Int @default(0) // 0–100
+  overduePending Int @default(0)
+  recovered      Int @default(0)
 
   // Effort
   avgDailyProgress        Float
   avgProgressLatencyHours Float
 
   // Visualization payloads
-  dailyEffort Json    // { "2026-02-16": 80, ... }
-  dailyStatus Json    // { "2026-02-16": "HIGH", ... }
+  dailyEffort Json // { "2026-02-16": 80, ... }
+  dailyStatus Json // { "2026-02-16": "HIGH", ... }
 
   // Scores
-  disciplineScore  Int  // 0–100
-  consistencyScore Int  // 0–100
+  disciplineScore  Int // 0–100
+  consistencyScore Int // 0–100
 
   // Behavioral Classification
   behavioralState BehavioralState @default(STABLE)
 
   finalizedAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   user  User   @relation(fields: [userId], references: [id])
   dream Dream? @relation(fields: [dreamId], references: [id])
@@ -397,34 +689,34 @@ model UserInsightSnapshot {
 }
 
 model GeneratedInsight {
-  id        String @id @default(uuid())
+  id        String   @id @default(uuid())
   userId    String
   dreamId   String?
   weekStart DateTime // Added to link to specific week
 
   insightType InsightType
-  evidence   Json
+  evidence    Json
 
   createdAt DateTime @default(now())
-  consumed  Boolean @default(false)
+  consumed  Boolean  @default(false)
 
-  user          User         @relation(fields: [userId], references: [id])
-  dream         Dream?       @relation(fields: [dreamId], references: [id])
-  
+  user  User   @relation(fields: [userId], references: [id])
+  dream Dream? @relation(fields: [dreamId], references: [id])
+
   // Removed relations specific to Phase 1 that are no longer mentioned in the new spec or can be inferred
   // If we need to keep backward compatibility we might keep them optional, 
   // but strictly following the prompt "Modify usage as follows":
   // The prompt definition didn't show the relations, but Prisma requires relations for fields like userId/dreamId if they map to models.
   // I will keep the relations that exist for data integrity but align fields to the prompt.
-  
+
   // Note: The prompt's GeneratedInsight definition didn't include taskId or domainEventId.
   // I will make them optional or remove if not needed. 
   // "stores LLM-generated explanations, not metrics"
-  
-  taskId          String?
-  task            Task?        @relation(fields: [taskId], references: [id])
-  domainEventId   String?
-  domainEvent     DomainEvent? @relation(fields: [domainEventId], references: [id])
+
+  taskId        String?
+  task          Task?        @relation(fields: [taskId], references: [id])
+  domainEventId String?
+  domainEvent   DomainEvent? @relation(fields: [domainEventId], references: [id])
 
   @@index([userId, createdAt])
 }
@@ -441,6 +733,7 @@ enum InsightType {
   DREAM_TASK_MISALIGNMENT
   USER_REFLECTION_TRIGGER
   WEEKLY_VERDICT // Added for weekly summary
+  NEXT_SPRINT_PLAN
 }
 
 model Day {
@@ -463,17 +756,27 @@ model Day {
 ///////////////////////
 
 model ChatMessage {
-  id          String   @id @default(uuid())
-  userId      String
-  role        String   // 'user' | 'assistant' | 'tool' | 'system'
-  content     String?  @db.Text
-  toolCalls   Json?    // Groq tool_calls array (for role='assistant' with tools)
-  toolCallId  String?  // for role='tool' responses (links back to assistant tool_calls)
-  metadata    Json?    // optional: intent hints, tokens used, etc.
-  readAt      DateTime? // ✅ when the message was seen by the recipient
-  createdAt   DateTime @default(now())
+  id         String    @id @default(uuid())
+  userId     String
+  role       String // 'user' | 'assistant' | 'tool' | 'system'
+  content    String?   @db.Text
+  toolCalls  Json? // Groq tool_calls array (for role='assistant' with tools)
+  toolCallId String? // for role='tool' responses (links back to assistant tool_calls)
+  metadata   Json? // optional: intent hints, tokens used, etc.
+  readAt     DateTime? // ✅ when the message was seen by the recipient
+  createdAt  DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
 }
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tableName String
+  operation String
+  recordId  String?
+  metadata  Json?
+  timestamp DateTime @default(now())
+}
+

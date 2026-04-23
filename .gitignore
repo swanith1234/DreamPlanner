@@ -79,3 +79,4 @@ debug.log
 # ===============================
 *.bak
 *.old
+ignitemate-admin.json

@@ -57,44 +57,45 @@ export class NotificationService {
   }
 
   /**
-   * Schedule pre-start reminders when task is created
-   * Called from task.created event handler
+   * Schedule the initial immediate notification when a Dream is created.
+   * This anchors the Dream to the cron schedule and kicks off the frequency cycle.
    */
   async schedulePreStartReminders(
     userId: string,
-    taskId: string,
+    taskId: string | null,
     dreamId: string,
     startDate: Date
   ): Promise<void> {
     try {
-      // Get user with preferences
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        include: { preferences: true },
+      const created = await this.createNotification(userId, dreamId, taskId, {
+        scheduledAt: new Date(),
+        message: "IgniteMate initialized for this Dream.",
+        type: 'REMINDER', // REMINDER triggers scheduleNextDreamReminder after success
       });
-
-      if (!user?.preferences) {
-        throw new Error('User preferences not found');
-      }
-
-      // Get pre-start reminders
-      const reminders = notificationScheduler.getPreStartReminders(startDate, user);
-
-      // Create each reminder
-      for (const reminder of reminders) {
-        await this.createNotification(userId, dreamId, taskId, reminder);
-      }
 
       await logger.info(
         'notification',
-        `Scheduled ${reminders.length} pre-start reminders`,
-        { taskId, reminders: reminders.length },
+        'Scheduled immediate initial dream notification',
+        { dreamId },
         userId
       );
+
+      // Bypass cron timer: manually lock and trigger immediate processing
+      const locked = await prisma.notification.updateMany({
+        where: { id: created.id, status: NotificationStatus.SCHEDULED },
+        data: { status: NotificationStatus.PROCESSING },
+      });
+
+      if (locked.count > 0) {
+        // Fire-and-forget
+        this.processNotification(created.id, 0).catch(err => {
+           logger.error('notification', 'Immediate processing fire failed', { error: err.message, notificationId: created.id });
+        });
+      }
     } catch (error: any) {
-      await logger.error('notification', 'Failed to schedule pre-start reminders', {
+      await logger.error('notification', 'Failed to schedule initial dream notification', {
         error: error.message,
-        taskId,
+        dreamId,
       });
     }
   }
@@ -103,45 +104,26 @@ export class NotificationService {
    * Schedule next frequency-based reminder
    * Called by notification worker after marking notification as SENT
    */
-  async scheduleNextReminder(
+  /**
+   * Schedule next frequency-based reminder for the Dream
+   */
+  async scheduleNextDreamReminder(
     userId: string,
-    taskId: string,
     dreamId: string,
     deadline: Date
   ): Promise<void> {
     try {
-      // Get task to verify it's still valid
-      const task = await prisma.task.findUnique({
-        where: { id: taskId },
-      });
-
-      if (!task) {
-        await logger.warn('notification', 'Task not found for next reminder', { taskId }, userId);
-        return;
-      }
-
-      // Check if task is still active
-      if (task.status === 'COMPLETED' || task.status === 'BLOCKED' || task.status === 'ARCHIVED') {
-        await logger.info(
-          'notification',
-          'Task not active (completed/blocked/archived), skipping next reminder',
-          { taskId, status: task.status },
-          userId
-        );
-        return;
-      }
-
       // Check if parent dream is active
       const dream = await prisma.dream.findUnique({
         where: { id: dreamId },
         select: { status: true }
       });
 
-      if (dream?.status === 'ARCHIVED' || dream?.status === 'COMPLETED' || dream?.status === 'FAILED') {
+      if (!dream || dream.status === 'ARCHIVED' || dream.status === 'COMPLETED' || dream.status === 'FAILED') {
         await logger.info(
           'notification',
           'Parent dream not active, skipping next reminder',
-          { taskId, dreamStatus: dream.status },
+          { dreamId, dreamStatus: dream?.status },
           userId
         );
         return;
@@ -173,20 +155,20 @@ export class NotificationService {
         await logger.info(
           'notification',
           'No valid next notification time, stopping reminders',
-          { taskId },
+          { dreamId },
           userId
         );
         return;
       }
 
-      // Create next notification
-      await this.createNotification(userId, dreamId, taskId, nextNotif);
+      // Create next notification tied to Dream
+      await this.createNotification(userId, dreamId, null, nextNotif);
 
       await logger.info(
         'notification',
         'Next frequency-based reminder scheduled',
         {
-          taskId,
+          dreamId,
           scheduledAt: nextNotif.scheduledAt.toISOString(),
         },
         userId
@@ -194,7 +176,7 @@ export class NotificationService {
     } catch (error: any) {
       await logger.error('notification', 'Failed to schedule next reminder', {
         error: error.message,
-        taskId,
+        dreamId,
       });
     }
   }
@@ -451,22 +433,31 @@ export class NotificationService {
    */
   async processNotification(notificationId: string, attempt: number = 0): Promise<void> {
     try {
-      // STEP 1: Fetch notification
+      // STEP 1: Fetch notification with full Dream context
       const notification = await prisma.notification.findUnique({
         where: { id: notificationId },
         include: {
           user: {
             include: { preferences: true }
           },
-          task: {
-            include: { checkpoints: true }
+          dream: {
+            include: {
+              tasks: {
+                include: { checkpoints: true }
+              }
+            }
           },
-          dream: true,
         },
       });
 
-      if (!notification) {
-        await logger.warn('notification', 'Notification not found for processing', { notificationId });
+      if (!notification || !notification.dream) {
+        await logger.warn('notification', 'Notification or Dream not found for processing', { notificationId });
+        return;
+      }
+
+      // Ensure Dream is ACTIVE
+      if (['COMPLETED', 'ARCHIVED', 'FAILED'].includes(notification.dream.status)) {
+        await logger.info('notification', 'Dream not active, skipping notification processing', { dreamId: notification.dreamId });
         return;
       }
 
@@ -502,45 +493,42 @@ export class NotificationService {
             // Fallback if analytics fails
           }
 
-          const currentCheckpoint = notification.task?.checkpoints?.find((c: any) => !c.isCompleted);
+          // Evaluate Tasks for Case A/B/C
+          const allTasks = notification.dream.tasks || [];
+          const inProgressTasks = allTasks.filter(t => (t.progressPercent || 0) > 0 && t.status !== 'COMPLETED' && t.status !== 'ARCHIVED');
+          const pendingTasks = allTasks.filter(t => (t.progressPercent || 0) === 0 && t.status !== 'ARCHIVED');
+
+          let caseType = 'C';
+          let caseContext = "No active or pending tasks. Suggest planning the next milestone.";
+          if (inProgressTasks.length > 0) {
+            caseType = 'A';
+            caseContext = `User actively working on: ${inProgressTasks.map(t => t.title).join(', ')}`;
+          } else if (pendingTasks.length > 0) {
+            caseType = 'B';
+            caseContext = `User has pending tasks to start: ${pendingTasks.map(t => t.title).join(', ')}`;
+          }
+
+          // Evaluate ON_TRACK vs LAGGING
+          const isLagging = currentSprintDashboard ? (currentSprintDashboard.scores.disciplineScore < 60 || currentSprintDashboard.checkpoints.overduePending.count > 0) : false;
+          const statusFlag = isLagging ? 'LAGGING' : 'ON_TRACK';
 
           const llmMessage = await generateNotificationMessageWithLLM({
             notificationType: 'REMINDER',
             userTone: notification.user.preferences.motivationTone,
-
             userIdentity: {
-              dreamTitle: notification.dream?.title || 'Your Dream',
-              motivationStatement: notification.dream?.motivationStatement || 'Keep pushing forward.',
-              deadlineInDays: notification.dream?.deadline ? Math.round((new Date(notification.dream.deadline).getTime() - now.getTime()) / 86400000) : 30,
+              dreamTitle: notification.dream.title,
+              motivationStatement: notification.dream.motivationStatement || 'Keep pushing forward.',
+              deadlineInDays: notification.dream.deadline ? Math.round((new Date(notification.dream.deadline).getTime() - now.getTime()) / 86400000) : 30,
               tone: notification.user.preferences.motivationTone,
+              agentName: notification.user.preferences.agentName || `Future ${notification.user.name || 'you'}`,
             },
-
-            currentSprint: currentSprintDashboard ? {
-              disciplineScore: currentSprintDashboard.scores.disciplineScore,
-              activeDays: `${currentSprintDashboard.activity.activeDays}/7`,
-              lateCheckpoints: currentSprintDashboard.checkpoints.recovered.count + currentSprintDashboard.checkpoints.overduePending.count,
-              overdueTasks: currentSprintDashboard.checkpoints.overduePending.count,
-              currentStreak: 0,
-              effortTrend: 'N/A',
-              remainingWorkPercent: currentSprintDashboard.checkpoints.planned.count > 0
-                ? Math.round(100 - currentSprintDashboard.rates.executionRate) : 0,
-              behavioralState: 'LIVE_COMPUTING',
-            } : undefined,
-
-            pastSprint: pastSnapshot ? {
-              disciplineScore: pastSnapshot.disciplineScore,
-              disciplineTrend: 'N/A',
-              behavioralState: pastSnapshot.behavioralState || 'STABLE',
-            } : undefined,
-
-            today: {
-              checkpointTitle: currentCheckpoint?.title || notification.task?.title || 'Daily Focus',
-              currentProgress: notification.task?.progressPercent || 0,
-              target: 100,
-              isBehindSchedule: false,
-              hoursLeftToday: Math.max(0, 24 - now.getHours()),
+            statusEvaluation: {
+              caseType,
+              caseContext,
+              statusFlag,
+              disciplineScore: currentSprintDashboard?.scores.disciplineScore || 100
             }
-          });
+          } as any);
 
           if (llmMessage) {
             notification.message = llmMessage;
@@ -576,13 +564,12 @@ export class NotificationService {
           notification.userId
         );
 
-        // STEP 5: Schedule next reminder (if applicable)
-        if (notification.taskId && notification.type === 'REMINDER') {
-          await this.scheduleNextReminder(
+        // STEP 5: Schedule next reminder at the Dream level
+        if (notification.dreamId && notification.type === 'REMINDER') {
+          await this.scheduleNextDreamReminder(
             notification.userId,
-            notification.taskId,
-            notification.dreamId!,
-            notification.task!.deadline!
+            notification.dreamId,
+            notification.dream!.deadline!
           );
         }
       } else {

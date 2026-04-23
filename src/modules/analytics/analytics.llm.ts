@@ -83,3 +83,67 @@ export async function generateWeeklyInsight(input: WeeklyInsightInput): Promise<
         };
     }
 }
+
+export async function generateNextSprintPlan(input: {
+    userName: string;
+    tone: MotivationTone;
+    roadmapTitle: string;
+    upcomingMilestoneTitle?: string;
+    upcomingSkills: Array<{ title: string; completionCriteria: any; difficulty: string }>;
+    lastWeekSnapshot: UserInsightSnapshot;
+}): Promise<{
+    insightType: InsightType;
+    evidence: any;
+    message: string;
+}> {
+    try {
+        const { userName, tone, roadmapTitle, upcomingMilestoneTitle, upcomingSkills, lastWeekSnapshot } = input;
+
+        const prompt = `
+You are IgniteMate, a sprint planner.
+Goal: propose a next-week sprint plan derived from the user's roadmap and last week's performance.
+Max 120 words. Be direct and actionable. Speak in Motivation Tone (${tone}).
+
+ROADMAP: ${roadmapTitle}
+UPCOMING_MILESTONE: ${upcomingMilestoneTitle || 'N/A'}
+UPCOMING_SKILLS_JSON: ${JSON.stringify(upcomingSkills)}
+
+LAST_WEEK:
+- Active Days: ${lastWeekSnapshot.activeDays}/7
+- Discipline Score: ${lastWeekSnapshot.disciplineScore}/100
+- Execution Rate: ${lastWeekSnapshot.executionRate}%
+- Recovery Rate: ${lastWeekSnapshot.recoveryRate}%
+
+Return STRICT JSON:
+{
+  "insightType": "NEXT_SPRINT_PLAN",
+  "message": "...",
+  "evidence": { "skillsPicked": ["..."], "reasoning": ["..."] }
+}
+`;
+
+        const response = await groq.chat.completions.create({
+            model: GROQ_MODEL,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.6,
+            response_format: { type: 'json_object' }
+        });
+
+        const content = response.choices[0]?.message?.content;
+        if (!content) throw new Error('No content from LLM');
+        const result = JSON.parse(content);
+
+        return {
+            insightType: InsightType.NEXT_SPRINT_PLAN,
+            evidence: result.evidence || {},
+            message: result.message || 'Next sprint plan generated.'
+        };
+    } catch (error: any) {
+        logger.error('analytics-llm', 'Failed to generate next sprint plan', { error: error.message });
+        return {
+            insightType: InsightType.NEXT_SPRINT_PLAN,
+            evidence: {},
+            message: `Next sprint: pick 1-2 skills from your roadmap and do them daily for 45-60 minutes. Keep it small and consistent.`,
+        };
+    }
+}

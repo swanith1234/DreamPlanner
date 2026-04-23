@@ -13,14 +13,15 @@ export const TOOLS = [
         type: 'function',
         function: {
             name: 'searchTasks',
-            description: 'Search tasks by natural language. Use when user references a task ambiguously ("my OS task", "that one"). Returns matching tasks with IDs.',
+            description: 'Search tasks by keyword/dream. Use to find UUIDs before updates.',
             parameters: {
                 type: 'object',
                 properties: {
-                    query: { type: 'string', description: 'Search query' },
-                    status: { type: ['string', 'null'], description: 'Optional filter: PENDING | IN_PROGRESS | COMPLETED | BLOCKED | ARCHIVED' },
+                    q: { type: 'string' },
+                    dreamId: { type: 'string' },
+                    status: { type: 'string' },
                 },
-                required: ['query'],
+                required: [],
             },
         },
     },
@@ -29,12 +30,12 @@ export const TOOLS = [
         type: 'function',
         function: {
             name: 'listTasks',
-            description: 'Get all tasks. Filter by dreamId or status.',
+            description: 'List all tasks. Filter by dreamId/status.',
             parameters: {
                 type: 'object',
                 properties: {
                     dreamId: { type: ['string', 'null'] },
-                    status: { type: ['string', 'null'], description: 'Optional filter: PENDING | IN_PROGRESS | COMPLETED | BLOCKED | ARCHIVED' },
+                    status: { type: ['string', 'null'] },
                 },
                 required: [],
             },
@@ -70,6 +71,8 @@ export const TOOLS = [
                     description: { type: 'string' },
                     deadline: { type: 'string', description: 'YYYY-MM-DD' },
                     dreamId: { type: 'string', description: 'Parent dream UUID' },
+                    skillId: { type: ['string', 'null'], description: 'Optional internal roadmap skill tracking' },
+                    milestoneId: { type: ['string', 'null'], description: 'Optional internal roadmap milestone tracking' },
                     priority: { type: 'integer', minimum: 1, maximum: 5 },
                     startDate: { type: 'string', description: 'YYYY-MM-DD' },
                     estimatedDuration: { type: 'integer', description: 'Minutes' },
@@ -229,16 +232,31 @@ export const TOOLS = [
     },
 
     // ════════ DREAMS — read ════════
+    {
+        type: 'function',
+        function: {
+            name: 'searchDreams',
+            description: 'Search dreams by keyword/status.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    keyword: { type: 'string' },
+                    status: { type: 'string' },
+                },
+                required: [],
+            },
+        },
+    },
 
     {
         type: 'function',
         function: {
             name: 'listDreams',
-            description: 'Get all dreams. Optionally filter by status.',
+            description: 'List all dreams. Optional status filter.',
             parameters: {
                 type: 'object',
                 properties: {
-                    status: { type: ['string', 'null'], description: 'Optional filter: DRAFT | ACTIVE | COMPLETED | FAILED | ARCHIVED' },
+                    status: { type: ['string', 'null'] },
                 },
                 required: [],
             },
@@ -265,62 +283,22 @@ export const TOOLS = [
     {
         type: 'function',
         function: {
-            name: 'createDream',
-            description: 'Create a new dream draft. 3-step flow: createDream → validateDream → confirmDream. Confirm with user before calling.',
+            name: 'syncDreamState',
+            description: 'Sync the 6 ELITE fields. title, domain, targetGoal, currentSkillLevel, deadline, motivationStatement. Use confirmed=true only after final confirmation.',
             parameters: {
                 type: 'object',
                 properties: {
-                    title: { type: 'string' },
-                    description: { type: 'string' },
-                    deadline: { type: 'string', description: 'YYYY-MM-DD' },
-                    impactScore: { type: 'integer', minimum: 1, maximum: 10 },
-                    motivationStatement: { type: 'string', description: 'The emotional why behind this dream' },
+                    title: { type: ['string', 'null'] },
+                    domain: { type: ['string', 'null'] },
+                    targetGoal: { type: ['string', 'null'] },
+                    currentSkillLevel: { type: ['string', 'null'] },
+                    motivationStatement: { type: ['string', 'null'] },
+                    deadline: { type: ['string', 'null'], description: 'YYYY-MM-DD' },
+                    impactScore: { type: ['integer', 'null'], minimum: 1, maximum: 10 },
+                    additionalContext: { type: ['string', 'null'] },
+                    confirmed: { type: 'boolean' },
                 },
-                required: ['title', 'description', 'deadline', 'impactScore', 'motivationStatement'],
-            },
-        },
-    },
-
-    {
-        type: 'function',
-        function: {
-            name: 'validateDream',
-            description: 'Run AI validation and get suggested milestone checkpoints for a dream draft. Call this after createDream.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    dreamId: { type: 'string' },
-                },
-                required: ['dreamId'],
-            },
-        },
-    },
-
-    {
-        type: 'function',
-        function: {
-            name: 'confirmDream',
-            description: 'Finalize a dream with confirmed checkpoints. Call after validateDream. Confirm with user.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    dreamId: { type: 'string' },
-                    checkpoints: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                title: { type: 'string' },
-                                orderIndex: { type: 'integer' },
-                                description: { type: 'string' },
-                                expectedEffort: { type: 'integer' },
-                                miniDeadline: { type: 'string', description: 'YYYY-MM-DD' },
-                            },
-                            required: ['title', 'orderIndex'],
-                        },
-                    },
-                },
-                required: ['dreamId', 'checkpoints'],
+                required: [],
             },
         },
     },
@@ -490,6 +468,68 @@ export const TOOLS = [
         },
     },
 
+    // ════════ ROADMAP ════════
+
+    {
+        type: 'function',
+        function: {
+            name: 'generateRoadmap',
+            description: 'Generate a roadmap draft (milestones/skills) for a dream. Confirm with user before calling.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    dreamId: { type: 'string', description: 'Dream UUID' },
+                },
+                required: ['dreamId'],
+            },
+        },
+    },
+
+    {
+        type: 'function',
+        function: {
+            name: 'activateRoadmap',
+            description: 'Activate a roadmap draft. Confirm with user before calling.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    roadmapId: { type: 'string' },
+                },
+                required: ['roadmapId'],
+            },
+        },
+    },
+
+    {
+        type: 'function',
+        function: {
+            name: 'getRoadmap',
+            description: 'Get full details of a specific roadmap (milestones/skills).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    roadmapId: { type: 'string' },
+                },
+                required: ['roadmapId'],
+            },
+        },
+    },
+
+    {
+        type: 'function',
+        function: {
+            name: 'listRoadmaps',
+            description: 'List all roadmaps for a dream.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    dreamId: { type: 'string' },
+                },
+                required: ['dreamId'],
+            },
+        },
+    },
+
 ] as const;
 
 // ── Tool Buckets for Optimized Context ─────────────────────────────────────
@@ -509,6 +549,10 @@ export const ANALYTICS_TOOLS = TOOLS.filter(t =>
 
 export const USER_TOOLS = TOOLS.filter(t => 
     ['getPreferences', 'updatePreferences', 'updateProfile', 'listNotifications'].includes(t.function.name)
+);
+
+export const ROADMAP_TOOLS = TOOLS.filter(t =>
+    ['generateRoadmap', 'activateRoadmap', 'getRoadmap', 'listRoadmaps'].includes(t.function.name)
 );
 
 export type ToolName = typeof TOOLS[number]['function']['name'];

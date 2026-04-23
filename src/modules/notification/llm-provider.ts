@@ -12,33 +12,17 @@ export interface MessageGenerationInput {
     motivationStatement: string;
     deadlineInDays: number;
     tone: string;
+    agentName: string;
   };
 
-  currentSprint?: {
+  statusEvaluation: {
+    caseType: string;
+    caseContext: string;
+    statusFlag: string;
     disciplineScore: number;
-    activeDays: string; // e.g., "4/7"
-    lateCheckpoints: number;
-    overdueTasks: number;
-    currentStreak: number;
-    effortTrend: string;
-    remainingWorkPercent: number;
-    behavioralState: string;
-  };
-
-  pastSprint?: {
-    disciplineScore: number;
-    disciplineTrend: string;
-    behavioralState: string;
-  };
-
-  today?: {
-    checkpointTitle: string;
-    currentProgress: number;
-    target: number;
-    isBehindSchedule: boolean;
-    hoursLeftToday: number;
   };
 }
+
 
 /**
  * Generate personalized notification messages using Groq LLM
@@ -48,7 +32,7 @@ export async function generateNotificationMessageWithLLM(
   input: MessageGenerationInput
 ): Promise<string> {
   try {
-    const { notificationType, userTone, userIdentity, currentSprint, pastSprint, today } = input;
+    const { notificationType, userTone, userIdentity, statusEvaluation } = input;
 
     // Construct the structured JSON payload requested by the prompt
     const contextPayload = {
@@ -56,25 +40,22 @@ export async function generateNotificationMessageWithLLM(
         Dream: userIdentity.dreamTitle,
         Why: userIdentity.motivationStatement,
         DeadlineInDays: userIdentity.deadlineInDays,
-        Tone: userIdentity.tone,
       },
-      CurrentSprint: currentSprint || null,
-      PastSprint: pastSprint || null,
-      Today: today || null,
+      StatusEvaluation: statusEvaluation,
     };
 
-    const systemPrompt = `You are IgniteMate's performance agent.
-You speak according to the user's selected motivation tone (NEUTRAL, FRIENDLY, HARSH, ANALYTICAL).
-Your objective: Trigger action by interpreting structured performance data.
-Reference real metrics (discipline score, active days, etc.).
-Tie the message to the user's dream and their "why".
-Mention consequences of inaction when the tone is HARSH.
+    const systemPrompt = `You are ${userIdentity.agentName}, IgniteMate's push notification agent.
+Your objective is to trigger action immediately based on the StatusEvaluation JSON payload.
 
-RESPONSE RULES:
-- ONLY output the notification message text.
+CONDITIONAL LOGIC:
+- If statusFlag is 'LAGGING': Act as a drill sergeant. You MUST explicitly mention the user's "Why" statement from UserIdentity to wake them up. Include a performance metric (e.g. disciplineScore).
+- If statusFlag is 'ON_TRACK': Act as a brief cheerleader. Keep it extremely positive and action-oriented. Do NOT mention the "Why" statement or heavy metrics.
+
+STRICT CONSTRAINTS:
+- The message MUST evaluate the 'caseContext'. Case A = active tasks padding progress; Case B = nudge to start pending tasks; Case C = strategic advice on next roadmap step.
+- MAXIMUM length 1 to 2 very short, punchy sentences.
 - NO preamble (e.g., "Based on the data...").
-- NO headers, NO JSON, NO explanations.
-- Max 100 words.`;
+- NO bolding, Markdown, or headers.`;
 
     const userPrompt = `DATA:
 ${JSON.stringify(contextPayload, null, 2)}`;

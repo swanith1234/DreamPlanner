@@ -12,6 +12,8 @@ export class UserService {
                     sleepStart: data.sleepStart,
                     sleepEnd: data.sleepEnd,
                     quietHours: data.quietHours || [],
+                    agentName: data.agentName,
+                    preferredName: data.preferredName,
                 },
                 create: {
                     userId,
@@ -20,6 +22,8 @@ export class UserService {
                     sleepStart: data.sleepStart || '23:00',
                     sleepEnd: data.sleepEnd || '07:00',
                     quietHours: data.quietHours || [],
+                    agentName: data.agentName,
+                    preferredName: data.preferredName,
                 },
             });
 
@@ -34,6 +38,7 @@ export class UserService {
     async getPreferences(userId: string) {
         return prisma.userPreference.findUnique({
             where: { userId },
+            include: { user: { select: { name: true } } }
         });
     }
 

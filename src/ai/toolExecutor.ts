@@ -15,6 +15,7 @@ import { dreamApi } from '../apiAdapter/dreamApi';
 import { analyticsApi } from '../apiAdapter/analyticsApi';
 import { userApi } from '../apiAdapter/userApi';
 import { notificationApi } from '../apiAdapter/notificationApi';
+import { roadmapApi } from '../apiAdapter/roadmapApi';
 import { logger } from '../utils/logger';
 import type { ToolName } from './tools';
 
@@ -68,6 +69,7 @@ export async function executeTool(
     args: Record<string, any>,
     token: string,
 ): Promise<any> {
+    args = args || {};
 
     // Log every tool invocation with its args before calling
     await logger.info('tool-executor', `[TOOL START] ${name}`, { args });
@@ -79,7 +81,11 @@ export async function executeTool(
 
             // ── Tasks — read ────────────────────────────────────────────────
             case 'searchTasks': {
-                result = await taskApi.searchTasks(token, args.query, args.status);
+                result = await taskApi.searchTasks(token, {
+                    q: args.q,
+                    dreamId: args.dreamId,
+                    status: args.status
+                });
                 break;
             }
 
@@ -98,6 +104,8 @@ export async function executeTool(
                     description: args.description,
                     deadline: args.deadline,
                     dreamId: args.dreamId,
+                    skillId: args.skillId,
+                    milestoneId: args.milestoneId,
                     priority: coercePriority(args.priority),
                     startDate: safeStartDate(args.startDate),
                     estimatedDuration: args.estimatedDuration
@@ -162,31 +170,25 @@ export async function executeTool(
                 result = await dreamApi.listDreams(token, args.status || 'ACTIVE');
                 break;
 
+            case 'searchDreams':
+                result = await dreamApi.searchDreams(token, args.keyword, args.status);
+                break;
+
             case 'getDream':
                 result = await dreamApi.getDream(token, args.dreamId);
                 break;
 
-            case 'validateDream':
-                result = await dreamApi.validateDream(token, args.dreamId);
+            case 'getDream':
+                result = await dreamApi.getDream(token, args.dreamId);
+                break;
+
+            case 'syncDreamState':
+                result = await dreamApi.syncDreamState(token, args);
                 break;
 
             // ── Dreams — write ─────────────────────────────────────────────
-            case 'createDream':
-                result = await dreamApi.createDraft(token, {
-                    title: args.title,
-                    description: args.description,
-                    deadline: args.deadline,
-                    impactScore: parseInt(String(args.impactScore), 10),
-                    motivationStatement: args.motivationStatement,
-                });
-                break;
-
             case 'updateDream':
                 result = await dreamApi.updateDream(token, args.dreamId, args);
-                break;
-
-            case 'confirmDream':
-                result = await dreamApi.confirmDream(token, args.dreamId, args.checkpoints);
                 break;
 
             case 'completeDream':
@@ -244,6 +246,23 @@ export async function executeTool(
             // ── Notifications ──────────────────────────────────────────────
             case 'listNotifications':
                 result = await notificationApi.listNotifications(token);
+                break;
+
+            // ── Roadmap ───────────────────────────────────────────────────────
+            case 'generateRoadmap':
+                result = await roadmapApi.generateRoadmap(token, args.dreamId);
+                break;
+
+            case 'activateRoadmap':
+                result = await roadmapApi.activateRoadmap(token, args.roadmapId);
+                break;
+
+            case 'getRoadmap':
+                result = await roadmapApi.getRoadmap(token, args.roadmapId);
+                break;
+
+            case 'listRoadmaps':
+                result = await roadmapApi.getByDream(token, args.dreamId);
                 break;
 
             default:

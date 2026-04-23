@@ -1,5 +1,7 @@
 export interface CreateTaskRequest {
   dreamId: string;
+  skillId?: string; // Optional: link to a specific skill in roadmap
+  milestoneId?: string; // Optional: link to a specific milestone in roadmap
   title: string;
   description?: string;
   startDate?: string; // ISO date

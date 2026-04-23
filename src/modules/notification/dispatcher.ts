@@ -8,7 +8,7 @@ import { chatService } from '../chat/chat.service';
 
 export interface NotificationData {
   notification: Notification;
-  user: User;
+  user: User & { preferences?: any };
   task?: any;
   dream?: any;
 }
@@ -48,8 +48,8 @@ export class NotificationDispatcher {
 
       // ── Save to Chat History ──────────────────────────────────────────────────
       await chatService.saveMessage(data.user.id, 'assistant', data.notification.message, null, null, {
-          notificationId: data.notification.id,
-          type: data.notification.type
+        notificationId: data.notification.id,
+        type: data.notification.type
       });
 
       // Succeed if at least one delivery channel worked (WS or push).
@@ -123,8 +123,10 @@ export class NotificationDispatcher {
 
       const metadata = notification.metadata ? (typeof notification.metadata === 'string' ? JSON.parse(notification.metadata) : notification.metadata) : {};
 
+      const agentName = user.preferences?.agentName || `Future ${user.name || 'you'}`;
+
       await pushService.sendPushNotification(user.id, {
-        title: 'IgniteMate',
+        title: agentName,
         body: notification.message,
         icon: '/pwa-192x192.png',
         actions: metadata.pushActions || [],

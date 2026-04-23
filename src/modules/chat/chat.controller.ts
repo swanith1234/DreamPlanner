@@ -47,7 +47,7 @@ export const chatController = {
     async getHistory(req: AuthRequest, res: Response): Promise<void> {
         try {
             const userId = req.userId!;
-            const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+            const limit = req.query.limit ? parseInt(req.query.limit as string) : 30;
             const beforeMs = req.query.before ? parseInt(req.query.before as string) : undefined;
             
             const history = await chatService.getChatHistory(userId, limit, beforeMs);

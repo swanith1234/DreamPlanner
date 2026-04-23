@@ -75,6 +75,7 @@ export class AuthService {
         email: user.email,
         name: user.name,
         timezone: user.timezone,
+        preferences: user.preferences,
       },
       accessToken,
       refreshToken,
@@ -84,7 +85,10 @@ export class AuthService {
   async login(input: LoginRequest): Promise<AuthResponse> {
     const { email, password } = input;
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({ 
+      where: { email },
+      include: { preferences: true }
+    });
     if (!user) {
       throw new AuthError('Invalid credentials');
     }
@@ -109,6 +113,7 @@ export class AuthService {
         email: user.email,
         name: user.name,
         timezone: user.timezone,
+        preferences: user.preferences,
       },
       accessToken,
       refreshToken,

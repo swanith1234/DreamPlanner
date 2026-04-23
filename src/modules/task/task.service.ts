@@ -39,13 +39,18 @@ export class TaskService {
       if (startDate > deadline) throw new ValidationError('Start date cannot be after deadline');
     }
 
-    // // AI relevance check
-    // const validation = await taskValidator.validateTaskRelevance(
-    //   dream.title, dream.description, input.title, input.description || ''
-    // );
-    // if (!validation.isValid) {
-    //   throw new ValidationError(`Task does not align with dream: ${validation.feedback}`);
-    // }
+    // AI relevance check is intentionally skipped for now.
+    // const validation = await taskValidator.validateTaskRelevance(...);
+
+    if (input.skillId) {
+      const skill = await prisma.skill.findUnique({ where: { id: input.skillId } });
+      if (!skill) throw new NotFoundError('Skill not found');
+    }
+
+    if (input.milestoneId) {
+      const milestone = await prisma.milestone.findUnique({ where: { id: input.milestoneId } });
+      if (!milestone) throw new NotFoundError('Milestone not found');
+    }
 
     // Create task + checkpoints (no stored "active" state — derived at read time)
     const task = await prisma.task.create({
@@ -54,7 +59,7 @@ export class TaskService {
         dreamId: input.dreamId,
         title: input.title,
         description: input.description,
-        startDate: input.startDate ? new Date(input.startDate) : new Date(),
+        startDate: input.startDate ? new Date(input.startDate) : undefined,
         deadline,
         estimatedDuration: input.estimatedDuration,
         priority: input.priority,
@@ -72,12 +77,16 @@ export class TaskService {
             };
           }),
         },
+        skillLinks: input.skillId ? {
+          create: { skillId: input.skillId }
+        } : undefined,
+        milestoneLinks: input.milestoneId ? {
+          create: { milestoneId: input.milestoneId }
+        } : undefined,
       },
     });
 
-    await notificationService.schedulePreStartReminders(
-      userId, task.id, input.dreamId, new Date(input.startDate || new Date())
-    );
+    // Reminders are now scheduled purely at the Dream-level initialization.
 
     await eventService.publishEvent('task.created', {
       taskId: task.id, dreamId: input.dreamId, userId,
@@ -114,16 +123,45 @@ export class TaskService {
     const task = await prisma.task.findUnique({ where: { id: taskId } });
     if (!task || task.userId !== userId) throw new NotFoundError('Task');
 
+    let newStatus = task.status;
+    let completedAt = task.completedAt;
+
+    if (progress === 100) {
+      newStatus = TaskStatus.COMPLETED;
+      completedAt = completedAt || new Date();
+    } else if (progress > 0) {
+      newStatus = TaskStatus.IN_PROGRESS;
+      completedAt = null;
+    } else {
+      newStatus = TaskStatus.PENDING;
+      completedAt = null;
+    }
+
     const updated = await prisma.task.update({
       where: { id: taskId },
-      data: { progressPercent: progress, lastProgressAt: new Date() },
+      data: { 
+        progressPercent: progress, 
+        status: newStatus,
+        completedAt,
+        lastProgressAt: new Date() 
+      },
     });
 
     await eventService.publishEvent('task.progress_updated', {
       taskId, dreamId: task.dreamId, userId, progress,
     });
 
-    await logger.info('task', 'Task progress updated', { taskId, progress }, userId);
+    if (progress === 100 && task.status !== TaskStatus.COMPLETED) {
+      await eventService.publishEvent('task.completed', {
+        taskId: updated.id, dreamId: task.dreamId, userId,
+        completedAt: updated.completedAt?.toISOString(),
+      });
+      await userEventService.logEvent(userId, UserEventType.TASK_COMPLETED, 'TASK', taskId, {
+        dreamId: task.dreamId
+      });
+    }
+
+    await logger.info('task', 'Task progress and status updated', { taskId, progress, status: newStatus }, userId);
     return updated;
   }
 
@@ -376,22 +414,30 @@ export class TaskService {
     });
   }
 
-  async searchTasks(userId: string, query: string, status?: string): Promise<any[]> {
+  async searchTasks(
+    userId: string,
+    filter: { q?: string; dreamId?: string; status?: string }
+  ): Promise<any[]> {
+    const { q, dreamId, status } = filter;
+
     return prisma.task.findMany({
       where: {
         userId,
+        ...(dreamId && { dreamId }),
         ...(status && { status: status as TaskStatus }),
-        OR: [
-          { title: { contains: query, mode: 'insensitive' } },
-          { description: { contains: query, mode: 'insensitive' } },
-        ],
+        ...(q && {
+          OR: [
+            { title: { contains: q, mode: 'insensitive' } },
+            { description: { contains: q, mode: 'insensitive' } },
+          ],
+        }),
       },
       include: {
         checkpoints: { orderBy: { orderIndex: 'asc' } },
         dream: { select: { title: true, id: true } },
       },
       orderBy: { deadline: 'asc' },
-      take: 10,
+      take: 15,
     });
   }
 }

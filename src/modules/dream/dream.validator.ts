@@ -1,7 +1,19 @@
-
 import { groq, GROQ_MODEL } from '../../config/ai';
 import { DreamValidationResponse } from '../../types';
 import { logger } from '../../utils/logger';
+import { z } from 'zod';
+import { ServiceUnavailableError } from '../../utils/errors';
+
+const DreamValidationZodSchema = z.object({
+  isValid: z.boolean(),
+  warnings: z.array(z.string()),
+  checkpoints: z.array(z.object({
+    title: z.string(),
+    description: z.string(),
+    expectedEffort: z.number(),
+    miniDeadline: z.string()
+  })).optional().default([]),
+});
 
 export class DreamValidator {
   async validateDreamContent(
@@ -24,8 +36,14 @@ Motivation: ${motivationStatement || 'Not provided'}
 
 Respond ONLY with valid JSON (no markdown, no code blocks):
 {
+  // Set false ONLY if the goal is explicitly harmful, violent, irrelevant trolling, or a literal physical impossibility (e.g., "become Elon Musk", "build a time machine", "go to Mars tomorrow").
+  // MUST Set true for almost all genuine human goals, even highly ambitious ones with extremely short deadlines (e.g., "Get a Google job in 1 week"). Assume the user is already highly skilled and just needs a roadmap. Do not reject based on short timelines.
   "isValid": boolean,
+  
+  // Warnings should constructively highlight concerns WITHOUT aggressively rejecting the dream.
   "warnings": ["warning1", "warning2"],
+  
+  // Generate 4-5 concrete checkpoints that break down the dream.
   "checkpoints": [
     {
       "title": "Checkpoint 1",
@@ -34,13 +52,7 @@ Respond ONLY with valid JSON (no markdown, no code blocks):
       "miniDeadline": "2026-02-12"
     }
   ]
-}
-
-Rules for validation:
-- isValid = true if the dream is meaningful, specific, and has realistic timeline
-- isValid = false if it's vague, too ambitious, or deadline is unrealistic (e.g., < 7 days for major goal)
-- Generate 4-5 concrete checkpoints that break down the dream
-- Warnings should highlight concerns (e.g., "Timeline is tight", "Goal needs more specificity")`;
+}`;
 
       const response = await groq.chat.completions.create({
         model: GROQ_MODEL,
@@ -51,22 +63,22 @@ Rules for validation:
 
       const content = response.choices[0]?.message?.content || '{}';
       const parsed = JSON.parse(content);
+      const validated = DreamValidationZodSchema.parse(parsed);
 
       return {
-        isValid: parsed.isValid || false,
-        warnings: parsed.warnings || [],
-        suggestedCheckpoints: parsed.checkpoints || [],
+        isValid: validated.isValid,
+        warnings: validated.warnings,
+        suggestedCheckpoints: validated.checkpoints.map(cp => ({
+          ...cp,
+          miniDeadline: cp.miniDeadline ? new Date(cp.miniDeadline) : undefined,
+        })),
       };
     } catch (error: any) {
       await logger.error('ai', 'Dream validation failed', {
         error: error.message,
       });
-      // Return conservative validation on error
-      return {
-        isValid: false,
-        warnings: ['AI validation unavailable, please try again'],
-        suggestedCheckpoints: [],
-      };
+      // Throw explicitly so the backend returns an HTTP error, rather than silently failing to a false response
+      throw new ServiceUnavailableError('AI Dream validation cluster is currently unavailable or returned invalid schema. Please try again.');
     }
   }
 }
