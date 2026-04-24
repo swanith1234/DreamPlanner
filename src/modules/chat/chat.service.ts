@@ -86,12 +86,21 @@ export const chatService = {
         }
 
         // ── Map to Groq message format ──────────────────────────────────────
-        const rawMessages = window.map((msg): GroqMessage => ({
-            role: msg.role as GroqMessage['role'],
-            content: msg.content ?? null,
-            ...(msg.toolCalls ? { tool_calls: msg.toolCalls as any[] } : {}),
-            ...(msg.toolCallId ? { tool_call_id: msg.toolCallId } : {}),
-        }));
+        const rawMessages = window.map((msg): GroqMessage => {
+            let content = msg.content ?? null;
+            
+            // Inject hidden system context from metadata if present
+            if (msg.metadata && (msg.metadata as any).systemContext) {
+                content = (content ? content + '\n\n' : '') + (msg.metadata as any).systemContext;
+            }
+
+            return {
+                role: msg.role as GroqMessage['role'],
+                content,
+                ...(msg.toolCalls ? { tool_calls: msg.toolCalls as any[] } : {}),
+                ...(msg.toolCallId ? { tool_call_id: msg.toolCallId } : {}),
+            };
+        });
 
         // ── Payload Compression ─────────────────────────────────────────────
         // Drop tool messages and tool_calls that are not explicitly related

@@ -8,7 +8,9 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 // ─── UTILITIES ───────────────────────────────────────────────────────────────
 
 async function triggerCodeMind(feedback: Feedback) {
-  const CODE_MIND_WEBHOOK_URL = process.env.CODE_MIND_WEBHOOK_URL || 'http://localhost:4000/webhook/crash';
+  const CODE_MIND_WEBHOOK_URL = process.env.CODE_MIND_WEBHOOK_URL || 'https://codemind-5pz9.onrender.com/webhook/crash';
+  const BACKEND_URL = process.env.API_URL || 'http://localhost:3000';
+
   try {
     const appLog = await prisma.appLog.findFirst({
       where: { source: 'globalErrorHandler', context: { path: ['traceId'], equals: feedback.traceId! } }
@@ -22,14 +24,27 @@ async function triggerCodeMind(feedback: Feedback) {
         CODE_MIND_WEBHOOK_URL,
         {
           traceId: feedback.traceId,
+          feedbackId: feedback.id,
           functionName: ctx.functionName || '<unknown>',
           filePath: ctx.filePath,
           errorMessage: combinedMessage,
-          curlCommand: ctx.curlCommand
+          curlCommand: ctx.curlCommand,
+          // Tell Code-Mind where to send status updates
+          callbackUrl: `${BACKEND_URL}/api/admin/pipeline/update`
         },
         { timeout: 5000, headers: { 'Content-Type': 'application/json' } }
       );
       console.log(`[Admin Controller] Triggered Code-Mind for feedback ${feedback.id}`);
+      
+      // Initial log entry
+      await prisma.appLog.create({
+        data: {
+          level: 'INFO',
+          source: 'codeMindPipeline',
+          message: 'Pipeline initialized. Awaiting Code-Mind agent...',
+          userId: feedback.id, // Overloading userId as feedbackId for easier filtering
+        }
+      });
     }
   } catch (err: any) {
     console.error('[Admin Controller] Failed to trigger Code-Mind:', err?.message || err);
@@ -247,14 +262,21 @@ export const handleTelegramWebhook = async (req: Request, res: Response, next: N
        const chatId = update.callback_query.message.chat.id;
        const messageId = update.callback_query.message.message_id;
 
-       if (data.startsWith('fix_')) {
+        if (data.startsWith('fix_')) {
           const id = data.replace('fix_', '');
           const feedback = await prisma.feedback.findUnique({ where: { id } });
           if (feedback) {
              await prisma.feedback.update({ where: { id }, data: { status: 'IN_PROGRESS' } });
              if (feedback.traceId) triggerCodeMind(feedback);
              
-             await replyToTelegramCallback(chatId, messageId, `✅ Task \`${id.slice(0, 8)}\` accepted and dispatched to Code-Mind!`);
+             const adminUrl = process.env.ADMIN_URL || 'http://localhost:5173';
+             const fixUrl = `${adminUrl}/fix/${id}`;
+
+             await replyToTelegramCallback(
+               chatId, 
+               messageId, 
+               `✅ Accepted! Pipeline triggered.\n\n📺 *Watch Live Fix:* ${fixUrl}`
+             );
           }
        } else if (data.startsWith('ignore_')) {
           const id = data.replace('ignore_', '');
@@ -265,5 +287,49 @@ export const handleTelegramWebhook = async (req: Request, res: Response, next: N
      }
   } catch (err) {
      console.error('[Admin Controller] Telegram Webhook Error:', err);
+  }
+};
+
+// ─── PIPELINE UPDATES ────────────────────────────────────────────────────────
+
+export const postPipelineUpdate = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { feedbackId, message, level = 'INFO' } = req.body;
+
+    if (!feedbackId || !message) {
+      res.status(400).json({ error: 'feedbackId and message are required' });
+      return;
+    }
+
+    await prisma.appLog.create({
+      data: {
+        level,
+        source: 'codeMindPipeline',
+        message: message,
+        userId: feedbackId, // Reusing userId field for feedbackId mapping
+      }
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getPipelineLogs = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { feedbackId } = req.params;
+
+    const logs = await prisma.appLog.findMany({
+      where: {
+        source: 'codeMindPipeline',
+        userId: feedbackId
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    res.json({ logs });
+  } catch (err) {
+    next(err);
   }
 };

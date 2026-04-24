@@ -53,12 +53,13 @@ export class NotificationDispatcher {
         : data.notification.metadata;
 
       const systemContext = parsedMetadata && parsedMetadata.suggestedTask 
-         ? `\n\n[SYSTEM CONTEXT: The user is currently responding to a notification suggesting the task: ${JSON.stringify(parsedMetadata.suggestedTask)}]`
-         : '';
+         ? `[SYSTEM CONTEXT: The user is currently responding to a notification suggesting the task: ${JSON.stringify(parsedMetadata.suggestedTask)}]`
+         : null;
 
-      await chatService.saveMessage(data.user.id, 'assistant', data.notification.message + systemContext, null, null, {
+      await chatService.saveMessage(data.user.id, 'assistant', data.notification.message, null, null, {
         notificationId: data.notification.id,
-        type: data.notification.type
+        type: data.notification.type,
+        systemContext
       });
 
       // Succeed if at least one delivery channel worked (WS or push).

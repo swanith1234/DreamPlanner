@@ -11,32 +11,37 @@ const API_BASE = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
  * Includes inline keyboard buttons to Accept/Fix or Ignore.
  */
 export async function sendApprovalRequest(feedback: Feedback, combinedMessage: string) {
+  console.log(`[Telegram] Preparing approval request for feedback ${feedback.id}`);
+  
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.warn('[Telegram] Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID. Skipping notification.');
+    console.error('[Telegram] ERROR: Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in environment.');
     return;
   }
 
+  const typeLabel = feedback.type === 'BUG' ? '🚨 *New Bug Report*' : '💡 *New Idea/Feedback*';
+  const actionLabel = feedback.type === 'BUG' ? '✅ Accept & Fix' : '✅ Accept';
+
   // Telegram Markdown limits to ~4096 chars, so we truncate the combined message to 3000
-  const text = `🚨 *New Bug Report*\n\n*Feedback ID:* \`${feedback.id}\`\n*Trace ID:* \`${feedback.traceId || 'N/A'}\`\n\n*Details:*\n\`\`\`text\n${combinedMessage.substring(0, 3000)}\n\`\`\``;
+  const text = `${typeLabel}\n\n*Feedback ID:* \`${feedback.id}\`\n*Trace ID:* \`${feedback.traceId || 'N/A'}\`\n\n*Details:*\n\`\`\`text\n${combinedMessage.substring(0, 3000)}\n\`\`\``;
 
   const inlineKeyboard = {
     inline_keyboard: [
       [
-        { text: '✅ Accept & Fix', callback_data: `fix_${feedback.id}` },
+        { text: actionLabel, callback_data: `fix_${feedback.id}` },
         { text: '🗑️ Ignore', callback_data: `ignore_${feedback.id}` }
       ]
     ]
   };
 
   try {
-    await axios.post(`${API_BASE}/sendMessage`, {
+    const response = await axios.post(`${API_BASE}/sendMessage`, {
       chat_id: TELEGRAM_CHAT_ID,
       text: text,
       parse_mode: 'Markdown',
       reply_markup: inlineKeyboard
     });
-    console.log(`[Telegram] Sent approval request for feedback ${feedback.id}`);
+    console.log(`[Telegram] sendMessage success:`, response.data?.ok ? 'OK' : 'FAIL');
   } catch (err: any) {
-    console.error(`[Telegram] Error sending message:`, err?.response?.data || err?.message);
+    console.error(`[Telegram] sendMessage ERROR:`, err?.response?.data || err?.message);
   }
 }

@@ -35,11 +35,15 @@ export const submitFeedback = async (
       },
     });
 
-    // ── Telegram Approval Trigger ───────────────────────────────────────────
-    if (type === 'BUG' && traceId) {
-      // Fire-and-forget async trigger so we don't block the user's response
-      (async () => {
-        try {
+    // ── Telegram Notification ──────────────────────────────────────────────
+    // Fire-and-forget async trigger
+    (async () => {
+      try {
+        console.log(`[Feedback Controller] Attempting Telegram notify for feedback ${feedback.id} (type: ${type})`);
+        
+        let combinedMessage = `[HUMAN FEEDBACK]\n${message}`;
+
+        if (traceId) {
           // Look up the corresponding crash details from AppLog
           const appLog = await prisma.appLog.findFirst({
             where: {
@@ -53,19 +57,19 @@ export const submitFeedback = async (
 
           if (appLog && appLog.context) {
             const ctx = appLog.context as any;
-            
-            // Fuse the human complaint with the raw technical stack trace
-            const combinedMessage = `[HUMAN FEEDBACK]\n${message}\n\n[TECHNICAL ERROR]\n${ctx.stackTrace || appLog.message}`;
-
-            await sendApprovalRequest(feedback, combinedMessage);
+            // Cleaned up message: only include the error message, NOT the whole stack trace
+            combinedMessage += `\n\n[TECHNICAL ERROR]\n${appLog.message.split('\n')[0]}`;
           } else {
-             console.log(`[Feedback Controller] Could not find AppLog context for traceId: ${traceId}`);
+            console.warn(`[Feedback Controller] No AppLog found for traceId: ${traceId}`);
           }
-        } catch (err: any) {
-          console.error('[Feedback Controller] Failed to trigger Telegram bot:', err?.message || err);
         }
-      })();
-    }
+
+        await sendApprovalRequest(feedback, combinedMessage);
+        console.log(`[Feedback Controller] Telegram notify success for feedback ${feedback.id}`);
+      } catch (err: any) {
+        console.error('[Feedback Controller] Failed to trigger Telegram bot:', err?.message || err);
+      }
+    })();
 
     res.status(201).json({ success: true, feedback });
   } catch (error) {
