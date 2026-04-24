@@ -154,6 +154,7 @@ model User {
   revisionItems     RevisionItem[]
   forecastRuns      ForecastRun[]
   timeGapEvidence   TimeGapEvidence[]
+  feedbacks         Feedback[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -780,3 +781,37 @@ model AuditLog {
   timestamp DateTime @default(now())
 }
 
+///////////////////////
+// FEEDBACK (CODE-MIND WIDGET)
+///////////////////////
+
+enum FeedbackType {
+  BUG
+  IDEA
+}
+
+enum FeedbackStatus {
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+  IGNORED
+}
+
+model Feedback {
+  id        String         @id @default(uuid())
+  type      FeedbackType
+  message   String         @db.Text
+  traceId   String?        // Optional trace ID for linked runtime errors
+  path      String?        // The window path where the feedback was submitted
+  
+  status    FeedbackStatus @default(PENDING)
+  resolvedAt DateTime?
+  
+  userId    String?        // Optional: associated user
+  user      User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime       @default(now())
+
+  @@index([traceId])
+  @@index([userId])
+}

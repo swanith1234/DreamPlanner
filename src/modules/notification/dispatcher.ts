@@ -47,7 +47,16 @@ export class NotificationDispatcher {
       anyChannelSucceeded = true; // WS send is fire-and-forget, always count as attempted
 
       // ── Save to Chat History ──────────────────────────────────────────────────
-      await chatService.saveMessage(data.user.id, 'assistant', data.notification.message, null, null, {
+      // Inject suggested task intent into message so the AI Orchestrator can seamlessly respond to exact task
+      const parsedMetadata = typeof data.notification.metadata === 'string' 
+        ? JSON.parse(data.notification.metadata) 
+        : data.notification.metadata;
+
+      const systemContext = parsedMetadata && parsedMetadata.suggestedTask 
+         ? `\n\n[SYSTEM CONTEXT: The user is currently responding to a notification suggesting the task: ${JSON.stringify(parsedMetadata.suggestedTask)}]`
+         : '';
+
+      await chatService.saveMessage(data.user.id, 'assistant', data.notification.message + systemContext, null, null, {
         notificationId: data.notification.id,
         type: data.notification.type
       });

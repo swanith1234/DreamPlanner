@@ -1,6 +1,6 @@
 import express, { Express } from 'express';
 import { requestLogger } from './middleware/requestLogger';
-import { errorHandler } from './middleware/errorHandler';
+import { globalErrorHandler } from './middleware/globalErrorHandler';
 
 import authRoutes from './modules/auth/auth.routes';
 import dreamRoutes from './modules/dream/dream.route';
@@ -12,6 +12,8 @@ import chatRoutes from './modules/chat/chat.route';
 import roadmapRoutes from './modules/roadmap/roadmap.route';
 import assessmentRoutes from './modules/assessment/assessment.route';
 import forecastRoutes from './modules/forecast/forecast.route';
+import feedbackRoutes from './modules/feedback/feedback.routes';
+import adminRoutes from './modules/admin/admin.routes';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 
@@ -75,9 +77,11 @@ export function createApp(): Express {
   app.use('/api/roadmaps', roadmapRoutes);
   app.use('/api/assessments', assessmentRoutes);
   app.use('/api/forecast', forecastRoutes);
+  app.use('/api/feedback', feedbackRoutes);
+  app.use('/api/admin', adminRoutes);
 
   // Global error handler
-  app.use(errorHandler);
+  app.use(globalErrorHandler);
 
   return app;
 }

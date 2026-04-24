@@ -1,8 +1,14 @@
 import { PrismaClient } from '@prisma/client';
 
-const basePrisma = new PrismaClient({
-  log: ['error', 'warn'],
-});
+const globalForPrisma = global as unknown as { basePrisma: PrismaClient };
+
+const basePrisma =
+  globalForPrisma.basePrisma ||
+  new PrismaClient({
+    log: ['error', 'warn'],
+  });
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.basePrisma = basePrisma;
 
 const prisma = basePrisma.$extends({
   query: {

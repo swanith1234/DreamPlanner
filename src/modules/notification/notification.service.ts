@@ -444,21 +444,58 @@ export class NotificationService {
             include: {
               tasks: {
                 include: { checkpoints: true }
+              },
+              roadmaps: {
+                where: { status: 'ACTIVE' },
+                include: {
+                  milestones: {
+                    where: { status: 'PENDING' },
+                    orderBy: { orderIndex: 'asc' }
+                  }
+                }
               }
             }
           },
         },
       });
 
-      if (!notification || !notification.dream) {
-        await logger.warn('notification', 'Notification or Dream not found for processing', { notificationId });
+      if (!notification) {
+        await logger.warn('notification', 'Notification not found for processing', { notificationId });
         return;
       }
 
-      // Ensure Dream is ACTIVE
-      if (['COMPLETED', 'ARCHIVED', 'FAILED'].includes(notification.dream.status)) {
+      // Ensure Dream is ACTIVE if there is a dream
+      if (notification.dream && ['COMPLETED', 'ARCHIVED', 'FAILED'].includes(notification.dream.status)) {
         await logger.info('notification', 'Dream not active, skipping notification processing', { dreamId: notification.dreamId });
         return;
+      }
+
+      // CASE 3: No Active Dreams (The Nudge / Case Zero)
+      // If there is no dream associated and type is MOTIVATIONAL/REMINDER, we inject the hardcoded message here.
+      if (!notification.dream) {
+        const CASE_ZERO_MESSAGES = [
+          "Your potential is waiting. Define a new dream today and take the first step.",
+          "Every journey starts with a single step. What is your next big dream?",
+          "A goal without a timeline is just a wish. Let's build your next roadmap.",
+          "Don't wait for the perfect moment. Create your next dream and start now.",
+          "You've shown what you're capable of. What's next? Set a new dream today.",
+          "Greatness requires a destination. Take 5 minutes to define your next goal.",
+          "Your future self is depending on what you do today. Start a new dream.",
+          "Ready for the next challenge? Break it down and build your roadmap.",
+          "Momentum is your best friend. Don't lose it. Set your next dream now.",
+          "The only limits are the ones you set. Dream big, plan smart."
+        ];
+        
+        // JIT Content Generation for Case 3
+        if (notification.type === 'REMINDER' || notification.type === 'MOTIVATIONAL') {
+           const randomMessage = CASE_ZERO_MESSAGES[Math.floor(Math.random() * CASE_ZERO_MESSAGES.length)];
+           notification.message = randomMessage;
+           
+           await prisma.notification.update({
+             where: { id: notificationId },
+             data: { message: randomMessage }
+           });
+        }
       }
 
       // STEP 2: Check if already processed (idempotency)
@@ -471,72 +508,90 @@ export class NotificationService {
         return;
       }
 
-      // STEP 2.5: JIT Content Generation (LLM)
-      if (notification.type === 'REMINDER' && notification.user.preferences) {
+      // STEP 2.5: JIT Content Generation (LLM) utilizing 3-State Logic
+      if (notification.dream && notification.type === 'REMINDER' && notification.user.preferences) {
         try {
           const now = new Date();
-          // Lazy load services to avoid cyclic dependencies
-          const { analyticsService } = require('../analytics/analytics.service');
-          const { subDays } = require('date-fns');
-
-          let currentSprintDashboard = null;
-          let pastSnapshot = null;
-
-          try {
-            currentSprintDashboard = await analyticsService.computeDashboard(notification.userId, now);
-            const sprintStr = currentSprintDashboard?.sprintWindow?.start || now.toISOString().split('T')[0];
-            const prevWeekStart = subDays(new Date(sprintStr + 'T12:00:00Z'), 7);
-            pastSnapshot = await prisma.userInsightSnapshot.findFirst({
-              where: { userId: notification.userId, dreamId: null, weekStart: prevWeekStart }
-            });
-          } catch (e) {
-            // Fallback if analytics fails
-          }
-
-          // Evaluate Tasks for Case A/B/C
           const allTasks = notification.dream.tasks || [];
-          const inProgressTasks = allTasks.filter(t => (t.progressPercent || 0) > 0 && t.status !== 'COMPLETED' && t.status !== 'ARCHIVED');
-          const pendingTasks = allTasks.filter(t => (t.progressPercent || 0) === 0 && t.status !== 'ARCHIVED');
+          const activeTasks = allTasks.filter(t => ['PENDING', 'IN_PROGRESS'].includes(t.status));
 
-          let caseType = 'C';
-          let caseContext = "No active or pending tasks. Suggest planning the next milestone.";
-          if (inProgressTasks.length > 0) {
-            caseType = 'A';
-            caseContext = `User actively working on: ${inProgressTasks.map(t => t.title).join(', ')}`;
-          } else if (pendingTasks.length > 0) {
-            caseType = 'B';
-            caseContext = `User has pending tasks to start: ${pendingTasks.map(t => t.title).join(', ')}`;
-          }
+          // Calculate Case Type
+          let caseType: 'Case1' | 'Case2' = activeTasks.length > 0 ? 'Case1' : 'Case2';
+          
+          let extractedSuggestedTask: any = null;
 
-          // Evaluate ON_TRACK vs LAGGING
-          const isLagging = currentSprintDashboard ? (currentSprintDashboard.scores.disciplineScore < 60 || currentSprintDashboard.checkpoints.overduePending.count > 0) : false;
-          const statusFlag = isLagging ? 'LAGGING' : 'ON_TRACK';
+          const llmInputPayload: any = {
+             notificationType: 'REMINDER',
+             caseType,
+             userTone: notification.user.preferences.motivationTone,
+             userIdentity: {
+               dreamTitle: notification.dream.title,
+               motivationStatement: notification.dream.motivationStatement || 'Stay focused.',
+               agentName: notification.user.preferences.agentName || `IgniteMate`,
+             },
+             statusEvaluation: {}
+          };
 
-          const llmMessage = await generateNotificationMessageWithLLM({
-            notificationType: 'REMINDER',
-            userTone: notification.user.preferences.motivationTone,
-            userIdentity: {
-              dreamTitle: notification.dream.title,
-              motivationStatement: notification.dream.motivationStatement || 'Keep pushing forward.',
-              deadlineInDays: notification.dream.deadline ? Math.round((new Date(notification.dream.deadline).getTime() - now.getTime()) / 86400000) : 30,
-              tone: notification.user.preferences.motivationTone,
-              agentName: notification.user.preferences.agentName || `Future ${notification.user.name || 'you'}`,
-            },
-            statusEvaluation: {
-              caseType,
-              caseContext,
-              statusFlag,
-              disciplineScore: currentSprintDashboard?.scores.disciplineScore || 100
-            }
-          } as any);
-
-          if (llmMessage) {
-            notification.message = llmMessage;
-            await prisma.notification.update({
-              where: { id: notificationId },
-              data: { message: llmMessage }
+          if (caseType === 'Case1') {
+            const endOfDay = new Date();
+            endOfDay.setHours(23, 59, 59, 999);
+            const timeRemainingInDay = Math.floor((endOfDay.getTime() - now.getTime()) / (1000 * 60 * 60));
+            const todaysCheckpoints = activeTasks.flatMap(t => t.checkpoints).map(c => c.title);
+            const progressMadeToday = activeTasks.map(t => `${t.title} (${t.progressPercent || 0}% done)`).join(', ');
+            
+            llmInputPayload.statusEvaluation = {
+              progressMadeToday,
+              timeRemainingInDay,
+              todaysCheckpoints
+            };
+          } else {
+            // Case 2: Next Step Proposal
+            const completedTasksRecords = await prisma.task.findMany({
+              where: { dreamId: notification.dream.id, status: 'COMPLETED' },
+              orderBy: { completedAt: 'desc' },
+              take: 3
             });
+            const completedTasksString = completedTasksRecords.map(t => t.title).join(', ') || 'No previously completed tasks recent.';
+            
+             // @ts-ignore - Prisma relations queried above
+            const roadmaps = (notification.dream as any).roadmaps;
+            let firstPendingMilestone = 'No visual roadmap defined. Suggest a logical next step.';
+            let pendingMilestoneId = null;
+
+            if (roadmaps && roadmaps.length > 0 && roadmaps[0].milestones.length > 0) {
+              firstPendingMilestone = roadmaps[0].milestones[0].title;
+              pendingMilestoneId = roadmaps[0].milestones[0].id;
+            }
+
+            llmInputPayload.statusEvaluation = {
+              completedTasks: completedTasksString,
+              firstPendingMilestone
+            };
+            
+            // Preset for extraction
+            extractedSuggestedTask = { milestoneId: pendingMilestoneId };
           }
+
+          const llmResult = await generateNotificationMessageWithLLM(llmInputPayload);
+
+          if (llmResult.message) {
+             notification.message = llmResult.message;
+             let metadataUpdate = notification.metadata ? (typeof notification.metadata === 'string' ? JSON.parse(notification.metadata) : notification.metadata) : {};
+
+             if (caseType === 'Case2') {
+               // Include the metadata required by intent pipeline
+               extractedSuggestedTask.title = llmResult.extractedTaskTitle;
+               metadataUpdate.suggestedTask = extractedSuggestedTask;
+             }
+             
+             notification.metadata = metadataUpdate;
+
+             await prisma.notification.update({
+               where: { id: notificationId },
+               data: { message: notification.message, metadata: metadataUpdate }
+             });
+          }
+
         } catch (err: any) {
           console.error('JIT LLM generation failed, using original message:', err.message);
         }
@@ -571,6 +626,24 @@ export class NotificationService {
             notification.dreamId,
             notification.dream!.deadline!
           );
+        } else if (!notification.dreamId && (notification.type === 'REMINDER' || notification.type === 'MOTIVATIONAL')) {
+          // Schedule next Case 3 Nudge
+          let frequency = 1;
+          if (notification.user?.preferences?.notificationFrequency) {
+            frequency = notification.user.preferences.notificationFrequency * 2; // Prompt: If set to 2 per day, send 4 per day.
+          }
+          // Calculate hours until next occurrence based on frequency per day
+          const hoursUntilNext = Math.max(24 / frequency, 1);
+          const nextScheduledAt = new Date(Date.now() + hoursUntilNext * 60 * 60 * 1000);
+
+          await this.createNotification(notification.userId, null, null, {
+            scheduledAt: nextScheduledAt,
+            message: "Upcoming Nudge",
+            type: notification.type,
+            metadata: {}
+          } as any);
+          
+          await logger.info('notification', 'Next zero-dream nudge scheduled', { scheduledAt: nextScheduledAt }, notification.userId);
         }
       } else {
         // Mark as FAILED (will be retried if BullMQ is used)

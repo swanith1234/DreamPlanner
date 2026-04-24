@@ -4,61 +4,75 @@ import { logger } from '../../utils/logger';
 import { NotificationType, MotivationTone } from '@prisma/client';
 
 export interface MessageGenerationInput {
-  notificationType: NotificationType;
+  notificationType: string;
+  caseType: 'Case1' | 'Case2';
   userTone: MotivationTone;
 
   userIdentity: {
     dreamTitle: string;
     motivationStatement: string;
-    deadlineInDays: number;
-    tone: string;
     agentName: string;
   };
 
-  statusEvaluation: {
-    caseType: string;
-    caseContext: string;
-    statusFlag: string;
-    disciplineScore: number;
-  };
+  statusEvaluation: any; // dynamically filled based on caseType
 }
 
 
+import { buildNotificationPrompt } from '../../utils/notificationPromptBuilder';
+
 /**
  * Generate personalized notification messages using Groq LLM
- * Based on highly structured performance analytics
+ * Based on 3-State Interactive JIT Notification Engine rules.
  */
 export async function generateNotificationMessageWithLLM(
   input: MessageGenerationInput
-): Promise<string> {
+): Promise<{ message: string; extractedTaskTitle?: string }> {
   try {
-    const { notificationType, userTone, userIdentity, statusEvaluation } = input;
+    const { caseType, userIdentity, statusEvaluation, userTone } = input;
 
-    // Construct the structured JSON payload requested by the prompt
-    const contextPayload = {
-      UserIdentity: {
-        Dream: userIdentity.dreamTitle,
-        Why: userIdentity.motivationStatement,
-        DeadlineInDays: userIdentity.deadlineInDays,
-      },
-      StatusEvaluation: statusEvaluation,
-    };
+    let baseContext = '';
+    let userPrompt = '';
 
-    const systemPrompt = `You are ${userIdentity.agentName}, IgniteMate's push notification agent.
-Your objective is to trigger action immediately based on the StatusEvaluation JSON payload.
+    if (caseType === 'Case1') {
+       baseContext = `You are ${userIdentity.agentName}, IgniteMate's push notification agent.
+Your objective is to trigger immediate execution.
 
-CONDITIONAL LOGIC:
-- If statusFlag is 'LAGGING': Act as a drill sergeant. You MUST explicitly mention the user's "Why" statement from UserIdentity to wake them up. Include a performance metric (e.g. disciplineScore).
-- If statusFlag is 'ON_TRACK': Act as a brief cheerleader. Keep it extremely positive and action-oriented. Do NOT mention the "Why" statement or heavy metrics.
+Prompt Instruction:
+- Generate a short, punchy notification.
+- Remind the user of their current daily checkpoints.
+- Acknowledge the time remaining in the day.
+- Push them hard to execute and reach the dream.
+- Include the user's motivational_context to personalize the tone.
+- Length: Strictly 1 to 2 short sentences. No bold. No Markdown.`;
 
-STRICT CONSTRAINTS:
-- The message MUST evaluate the 'caseContext'. Case A = active tasks padding progress; Case B = nudge to start pending tasks; Case C = strategic advice on next roadmap step.
-- MAXIMUM length 1 to 2 very short, punchy sentences.
-- NO preamble (e.g., "Based on the data...").
-- NO bolding, Markdown, or headers.`;
+       userPrompt = `Inputs:
+- Dream: ${userIdentity.dreamTitle}
+- Motivational Context: ${userIdentity.motivationStatement}
+- Progress Made Today: ${statusEvaluation.progressMadeToday || 'None'}
+- Time Remaining in Day: ${statusEvaluation.timeRemainingInDay} hours
+- Today's Checkpoints: ${statusEvaluation.todaysCheckpoints?.join(', ') || 'Your pending tasks'}`;
 
-    const userPrompt = `DATA:
-${JSON.stringify(contextPayload, null, 2)}`;
+    } else {
+       baseContext = `You are ${userIdentity.agentName}, IgniteMate's push notification agent.
+The user has an active dream but their task queue is empty.
+
+Prompt Instruction:
+- Analyze the recently completed tasks.
+- Look at the pending milestone from their visual roadmap.
+- Formulate a push notification suggesting the EXACT next task they should take up.
+- Format the notification as an interactive question.
+
+Crucial Formatting MUST FOLLOW:
+- Your output MUST end with an actionable confirmation, strictly: "Reply YES to add this to your queue."
+- Maximum 2 sentences. No markdown formatting.`;
+
+       userPrompt = `Inputs:
+- Dream: ${userIdentity.dreamTitle}
+- Completed Tasks: ${statusEvaluation.completedTasks}
+- First Pending Milestone: ${statusEvaluation.firstPendingMilestone}`;
+    }
+
+    const systemPrompt = buildNotificationPrompt(userTone, baseContext);
 
     const response = await groq.chat.completions.create({
       model: GROQ_MODEL,
@@ -73,27 +87,28 @@ ${JSON.stringify(contextPayload, null, 2)}`;
     const generatedMessage = response.choices[0]?.message?.content?.trim() || '';
 
     if (!generatedMessage) {
-      return getDefaultMessage(notificationType);
+      return { message: getDefaultMessage(input.notificationType as any) };
     }
 
     await logger.info('llm', 'Message generated', {
-      notificationType,
-      userTone,
+      caseType,
       messageLength: generatedMessage.length,
     });
 
-    return generatedMessage;
+    let extractedTaskTitle: string | undefined = undefined;
+    if (caseType === 'Case2') {
+       extractedTaskTitle = generatedMessage.replace(/Reply YES.*/i, '').trim();
+    }
+
+    return { message: generatedMessage, extractedTaskTitle };
   } catch (error: any) {
     await logger.error('llm', 'Failed to generate message', {
       error: error.message,
-      notificationType: input.notificationType,
+      caseType: input.caseType,
     });
-    return getDefaultMessage(input.notificationType);
+    return { message: getDefaultMessage(input.notificationType as any) };
   }
 }
-
-// The legacy buildContext and getToneInstruction functions are removed, 
-// as LLM now consumes the structured JSON payload directly in the prompt generator.
 
 /**
  * Default messages (fallback)
