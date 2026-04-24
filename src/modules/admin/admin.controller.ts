@@ -11,43 +11,75 @@ async function triggerCodeMind(feedback: Feedback) {
   const CODE_MIND_WEBHOOK_URL = process.env.CODE_MIND_WEBHOOK_URL || 'https://codemind-5pz9.onrender.com/webhook/crash';
   const BACKEND_URL = process.env.API_URL || 'http://localhost:3000';
 
+  console.log(`[Admin Controller] Triggering Code-Mind for feedback ${feedback.id}. TraceId: ${feedback.traceId}`);
+
   try {
-    const appLog = await prisma.appLog.findFirst({
-      where: { source: 'globalErrorHandler', context: { path: ['traceId'], equals: feedback.traceId! } }
-    });
+    let combinedMessage = `[HUMAN FEEDBACK]\n${feedback.message}`;
+    let functionName = '<unknown>';
+    let filePath = undefined;
+    let curlCommand = undefined;
 
-    if (appLog && appLog.context) {
-      const ctx = appLog.context as any;
-      const combinedMessage = `[HUMAN FEEDBACK]\n${feedback.message}\n\n[TECHNICAL ERROR]\n${ctx.stackTrace || appLog.message}`;
-
-      await axios.post(
-        CODE_MIND_WEBHOOK_URL,
-        {
-          traceId: feedback.traceId,
-          feedbackId: feedback.id,
-          functionName: ctx.functionName || '<unknown>',
-          filePath: ctx.filePath,
-          errorMessage: combinedMessage,
-          curlCommand: ctx.curlCommand,
-          // Tell Code-Mind where to send status updates
-          callbackUrl: `${BACKEND_URL}/api/admin/pipeline/update`
-        },
-        { timeout: 5000, headers: { 'Content-Type': 'application/json' } }
-      );
-      console.log(`[Admin Controller] Triggered Code-Mind for feedback ${feedback.id}`);
-      
-      // Initial log entry
-      await prisma.appLog.create({
-        data: {
-          level: 'INFO',
-          source: 'codeMindPipeline',
-          message: 'Pipeline initialized. Awaiting Code-Mind agent...',
-          userId: feedback.id, // Overloading userId as feedbackId for easier filtering
+    if (feedback.traceId) {
+      // Try to find technical context, but don't fail if missing
+      const appLog = await prisma.appLog.findFirst({
+        where: { 
+          source: 'globalErrorHandler',
+          // Use string contains if path filter is being finicky
+          context: {
+            path: ['traceId'],
+            equals: feedback.traceId
+          }
         }
       });
+
+      if (appLog && appLog.context) {
+        const ctx = appLog.context as any;
+        combinedMessage += `\n\n[TECHNICAL ERROR]\n${ctx.stackTrace || appLog.message}`;
+        functionName = ctx.functionName || functionName;
+        filePath = ctx.filePath;
+        curlCommand = ctx.curlCommand;
+      } else {
+        console.warn(`[Admin Controller] No technical AppLog found for traceId: ${feedback.traceId}. Proceeding with human feedback only.`);
+      }
     }
+
+    // Always create initial log so user sees SOMETHING in the dashboard
+    await prisma.appLog.create({
+      data: {
+        level: 'INFO',
+        source: 'codeMindPipeline',
+        message: 'Pipeline initialized. Dispatched request to Code-Mind agent...',
+        userId: feedback.id,
+      }
+    });
+
+    await axios.post(
+      CODE_MIND_WEBHOOK_URL,
+      {
+        traceId: feedback.traceId || `manual-${feedback.id.slice(0,8)}`,
+        feedbackId: feedback.id,
+        functionName,
+        filePath,
+        errorMessage: combinedMessage,
+        curlCommand,
+        callbackUrl: `${BACKEND_URL}/api/admin/pipeline/update`
+      },
+      { timeout: 10000, headers: { 'Content-Type': 'application/json' } }
+    );
+    
+    console.log(`[Admin Controller] Successfully reached Code-Mind for feedback ${feedback.id}`);
   } catch (err: any) {
-    console.error('[Admin Controller] Failed to trigger Code-Mind:', err?.message || err);
+    const errorMsg = err?.response?.data || err?.message;
+    console.error('[Admin Controller] Failed to trigger Code-Mind:', errorMsg);
+    
+    await prisma.appLog.create({
+      data: {
+        level: 'ERROR',
+        source: 'codeMindPipeline',
+        message: `Failed to reach Code-Mind agent: ${err.message}`,
+        userId: feedback.id,
+      }
+    });
   }
 }
 
@@ -159,21 +191,42 @@ export const getDashboard = async (req: Request, res: Response, next: NextFuncti
     ]);
     const activeToday = activeUserIds.size;
 
-    // 2. Growth Chart (Last 30 days active count)
+    // 2. Growth Chart (Last 30 days active count) - Optimized to 2 queries
     const growthChart = [];
-    for (let i = 29; i >= 0; i--) {
-       const start = new Date(today);
-       start.setDate(start.getDate() - i);
-       const endD = new Date(start);
-       endD.setDate(endD.getDate() + 1);
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-       const dTasks = await prisma.task.findMany({ where: { updatedAt: { gte: start, lt: endD } }, select: { userId: true }, distinct: ['userId'] });
-       const dDays = await prisma.day.findMany({ where: { date: { gte: start, lt: endD } }, select: { userId: true }, distinct: ['userId'] });
-       const dUserIds = new Set([...dTasks.map(t => t.userId), ...dDays.map(d => d.userId)]);
+    const allTasks = await prisma.task.findMany({
+      where: { updatedAt: { gte: thirtyDaysAgo } },
+      select: { userId: true, updatedAt: true }
+    });
+    const allDays = await prisma.day.findMany({
+      where: { date: { gte: thirtyDaysAgo } },
+      select: { userId: true, date: true }
+    });
+
+    const dailyActiveMap = new Map<string, Set<string>>();
+
+    allTasks.forEach(t => {
+      const dateKey = t.updatedAt.toISOString().split('T')[0];
+      if (!dailyActiveMap.has(dateKey)) dailyActiveMap.set(dateKey, new Set());
+      dailyActiveMap.get(dateKey)!.add(t.userId);
+    });
+
+    allDays.forEach(d => {
+      const dateKey = d.date.toISOString().split('T')[0];
+      if (!dailyActiveMap.has(dateKey)) dailyActiveMap.set(dateKey, new Set());
+      dailyActiveMap.get(dateKey)!.add(d.userId);
+    });
+
+    for (let i = 29; i >= 0; i--) {
+       const d = new Date(today);
+       d.setDate(d.getDate() - i);
+       const dateKey = d.toISOString().split('T')[0];
        
        growthChart.push({
-         date: start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-         activeUsers: dUserIds.size
+         date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+         activeUsers: dailyActiveMap.get(dateKey)?.size || 0
        });
     }
 
