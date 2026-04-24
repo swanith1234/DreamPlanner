@@ -6,6 +6,13 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 const API_BASE = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
+function escapeHTML(str: string) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 /**
  * Sends a bug report approval request to the Admin Telegram chat.
  * Includes inline keyboard buttons to Accept/Fix or Ignore.
@@ -18,11 +25,12 @@ export async function sendApprovalRequest(feedback: Feedback, combinedMessage: s
     return;
   }
 
-  const typeLabel = feedback.type === 'BUG' ? '🚨 *New Bug Report*' : '💡 *New Idea/Feedback*';
+  const typeLabel = feedback.type === 'BUG' ? '🚨 <b>New Bug Report</b>' : '💡 <b>New Idea/Feedback</b>';
   const actionLabel = feedback.type === 'BUG' ? '✅ Accept & Fix' : '✅ Accept';
 
-  // Telegram Markdown limits to ~4096 chars, so we truncate the combined message to 3000
-  const text = `${typeLabel}\n\n*Feedback ID:* \`${feedback.id}\`\n*Trace ID:* \`${feedback.traceId || 'N/A'}\`\n\n*Details:*\n\`\`\`text\n${combinedMessage.substring(0, 3000)}\n\`\`\``;
+  // Telegram limits to ~4096 chars
+  const escapedMessage = escapeHTML(combinedMessage.substring(0, 3500));
+  const text = `${typeLabel}\n\n<b>Feedback ID:</b> <code>${feedback.id}</code>\n<b>Trace ID:</b> <code>${feedback.traceId || 'N/A'}</code>\n\n<b>Details:</b>\n<pre>${escapedMessage}</pre>`;
 
   const inlineKeyboard = {
     inline_keyboard: [
@@ -34,14 +42,20 @@ export async function sendApprovalRequest(feedback: Feedback, combinedMessage: s
   };
 
   try {
-    const response = await axios.post(`${API_BASE}/sendMessage`, {
+    const url = `${API_BASE}/sendMessage`;
+    console.log(`[Telegram] Sending to: ${url} for chat: ${TELEGRAM_CHAT_ID}`);
+    
+    const response = await axios.post(url, {
       chat_id: TELEGRAM_CHAT_ID,
       text: text,
-      parse_mode: 'Markdown',
+      parse_mode: 'HTML',
       reply_markup: inlineKeyboard
     });
+    
     console.log(`[Telegram] sendMessage success:`, response.data?.ok ? 'OK' : 'FAIL');
   } catch (err: any) {
-    console.error(`[Telegram] sendMessage ERROR:`, err?.response?.data || err?.message);
+    console.error(`[Telegram] sendMessage ERROR status:`, err?.response?.status);
+    console.error(`[Telegram] sendMessage ERROR data:`, JSON.stringify(err?.response?.data || {}));
+    console.error(`[Telegram] sendMessage ERROR message:`, err?.message);
   }
 }

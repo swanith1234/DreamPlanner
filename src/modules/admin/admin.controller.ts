@@ -63,7 +63,8 @@ async function replyToTelegramCallback(chatId: string, messageId: string, text: 
     // Send confirmation
     await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
       chat_id: chatId,
-      text: text
+      text: text,
+      parse_mode: 'HTML'
     });
   } catch (err) {
     console.error('[Admin Controller] Failed to reply to Telegram:', err);
@@ -270,12 +271,12 @@ export const handleTelegramWebhook = async (req: Request, res: Response, next: N
              if (feedback.traceId) triggerCodeMind(feedback);
              
              const adminUrl = process.env.ADMIN_URL || 'http://localhost:5173';
-             const fixUrl = `${adminUrl}/fix/${id}`;
+             const fixUrl = `${adminUrl}/app/fix/${id}`;
 
              await replyToTelegramCallback(
                chatId, 
                messageId, 
-               `✅ Accepted! Pipeline triggered.\n\n📺 *Watch Live Fix:* ${fixUrl}`
+               `✅ Accepted! Pipeline triggered.\n\n📺 <b>Watch Live Fix:</b> ${fixUrl}`
              );
           }
        } else if (data.startsWith('ignore_')) {
