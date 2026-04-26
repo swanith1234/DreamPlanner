@@ -89,9 +89,9 @@ export const chatService = {
         const rawMessages = window.map((msg): GroqMessage => {
             let content = msg.content ?? null;
             
-            // Inject hidden system context from metadata if present
-            if (msg.metadata && (msg.metadata as any).systemContext) {
-                content = (content ? content + '\n\n' : '') + (msg.metadata as any).systemContext;
+            // Inject hidden system context from metadata if present (ONLY for LLM consumption)
+            if (msg.metadata && (msg.metadata as any).hiddenSystemContext) {
+                content = (content ? content + '\n\n' : '') + (msg.metadata as any).hiddenSystemContext;
             }
 
             return {

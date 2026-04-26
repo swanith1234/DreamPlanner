@@ -11,35 +11,46 @@ async function triggerCodeMind(feedback: Feedback) {
   const CODE_MIND_WEBHOOK_URL = process.env.CODE_MIND_WEBHOOK_URL || 'https://codemind-5pz9.onrender.com/webhook/crash';
   const BACKEND_URL = process.env.API_URL || 'http://localhost:3000';
 
-  console.log(`[Admin Controller] Triggering Code-Mind for feedback ${feedback.id}. TraceId: ${feedback.traceId}`);
+  console.log(`[Admin Controller] Triggering Code-Mind for feedback ${feedback.id}.`);
 
   try {
+    // 1. Always create initial log immediately so the user sees activity in the dashboard
+    await prisma.appLog.create({
+      data: {
+        level: 'INFO',
+        source: 'codeMindPipeline',
+        message: 'Pipeline initialized. Dispatched request to Code-Mind agent...',
+        context: { feedbackId: feedback.id }
+      }
+    });
+
     let combinedMessage = `[HUMAN FEEDBACK]\n${feedback.message}`;
     let functionName = '<unknown>';
     let filePath = undefined;
     let curlCommand = undefined;
 
+    // 2. Wrap technical context lookup in try/catch so it never blocks the agent trigger
     if (feedback.traceId) {
-      // Try to find technical context, but don't fail if missing
-      const appLog = await prisma.appLog.findFirst({
-        where: { 
-          source: 'globalErrorHandler',
-          // Use string contains if path filter is being finicky
-          context: {
-            path: ['traceId'],
-            equals: feedback.traceId
+      try {
+        const appLog = await prisma.appLog.findFirst({
+          where: { 
+            source: 'globalErrorHandler',
+            context: {
+              path: ['traceId'],
+              equals: feedback.traceId
+            }
           }
-        }
-      });
+        });
 
-      if (appLog && appLog.context) {
-        const ctx = appLog.context as any;
-        combinedMessage += `\n\n[TECHNICAL ERROR]\n${ctx.stackTrace || appLog.message}`;
-        functionName = ctx.functionName || functionName;
-        filePath = ctx.filePath;
-        curlCommand = ctx.curlCommand;
-      } else {
-        console.warn(`[Admin Controller] No technical AppLog found for traceId: ${feedback.traceId}. Proceeding with human feedback only.`);
+        if (appLog && appLog.context) {
+          const ctx = appLog.context as any;
+          combinedMessage += `\n\n[TECHNICAL ERROR]\n${ctx.stackTrace || appLog.message}`;
+          functionName = ctx.functionName || functionName;
+          filePath = ctx.filePath;
+          curlCommand = ctx.curlCommand;
+        }
+      } catch (err) {
+        console.warn(`[Admin Controller] Failed to lookup technical context for traceId ${feedback.traceId}:`, err);
       }
     }
 
@@ -49,7 +60,7 @@ async function triggerCodeMind(feedback: Feedback) {
         level: 'INFO',
         source: 'codeMindPipeline',
         message: 'Pipeline initialized. Dispatched request to Code-Mind agent...',
-        userId: feedback.id,
+        context: { feedbackId: feedback.id }
       }
     });
 
@@ -64,7 +75,7 @@ async function triggerCodeMind(feedback: Feedback) {
         curlCommand,
         callbackUrl: `${BACKEND_URL}/api/admin/pipeline/update`
       },
-      { timeout: 10000, headers: { 'Content-Type': 'application/json' } }
+      { timeout: 15000, headers: { 'Content-Type': 'application/json' } }
     );
     
     console.log(`[Admin Controller] Successfully reached Code-Mind for feedback ${feedback.id}`);
@@ -76,8 +87,8 @@ async function triggerCodeMind(feedback: Feedback) {
       data: {
         level: 'ERROR',
         source: 'codeMindPipeline',
-        message: `Failed to reach Code-Mind agent: ${err.message}`,
-        userId: feedback.id,
+        message: `Failed to reach Code-Mind agent: ${typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg)}`,
+        context: { feedbackId: feedback.id }
       }
     });
   }
@@ -107,7 +118,7 @@ async function replyToTelegramCallback(chatId: string, messageId: string, text: 
 
 export const getDashboard = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const range = req.query.range as string || 'month'; // 'week', 'month', 'year', 'all'
+    const range = (req.query.range as string) || 'month';
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -117,139 +128,120 @@ export const getDashboard = async (req: Request, res: Response, next: NextFuncti
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const startOfYear = new Date(today.getFullYear(), 0, 1);
 
-    const [totalUsers, registeredToday, registeredWeek, registeredMonth, registeredYear] = await Promise.all([
+    // ── 1. KPI Counts & Active Today (Parallelized) ──────────────────────────────
+    const [
+      totalUsers,
+      registeredToday,
+      registeredWeek,
+      registeredMonth,
+      registeredYear,
+      activeTodayTasks,
+      activeTodayDays
+    ] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({ where: { createdAt: { gte: today } } }),
       prisma.user.count({ where: { createdAt: { gte: startOfWeek } } }),
       prisma.user.count({ where: { createdAt: { gte: startOfMonth } } }),
-      prisma.user.count({ where: { createdAt: { gte: startOfYear } } })
+      prisma.user.count({ where: { createdAt: { gte: startOfYear } } }),
+      prisma.task.groupBy({
+        by: ['userId'],
+        where: { updatedAt: { gte: today } },
+      }),
+      prisma.day.groupBy({
+        by: ['userId'],
+        where: { date: { gte: today } },
+      })
     ]);
 
-    // Registration Chart Logic
-    let fromDate = new Date(today);
-    let groupBy = 'day';
+    const activeToday = new Set([
+      ...activeTodayTasks.map(t => t.userId),
+      ...activeTodayDays.map(d => d.userId)
+    ]).size;
 
-    if (range === 'week') {
-        fromDate.setDate(fromDate.getDate() - 7);
-    } else if (range === 'month') {
-        fromDate.setMonth(fromDate.getMonth() - 1);
-    } else if (range === 'year') {
-        fromDate.setFullYear(fromDate.getFullYear() - 1);
-        groupBy = 'month';
+    // ── 2. Registration Chart (Optimized) ──────────────────────────────────────
+    let fromDate = new Date(today);
+    let groupByFormat = 'day';
+
+    if (range === 'week') fromDate.setDate(fromDate.getDate() - 7);
+    else if (range === 'month') fromDate.setMonth(fromDate.getMonth() - 1);
+    else if (range === 'year') {
+      fromDate.setFullYear(fromDate.getFullYear() - 1);
+      groupByFormat = 'month';
     } else if (range === 'all') {
-        const firstUser = await prisma.user.findFirst({ orderBy: { createdAt: 'asc' }});
-        fromDate = firstUser ? new Date(firstUser.createdAt) : new Date(today.getFullYear(), 0, 1);
-        fromDate.setDate(1); // align to month start
-        groupBy = 'month';
+      const firstUser = await prisma.user.findFirst({ orderBy: { createdAt: 'asc' }, select: { createdAt: true } });
+      fromDate = firstUser?.createdAt ? new Date(firstUser.createdAt) : startOfYear;
+      fromDate.setDate(1);
+      groupByFormat = 'month';
     }
 
-    const recentUsers = await prisma.user.findMany({
-        where: { createdAt: { gte: fromDate } },
-        select: { createdAt: true }
-    });
+    // Use raw query for high-speed date grouping (Postgres specific)
+    const registrationStats: { date_part: string; count: bigint }[] = await prisma.$queryRaw`
+      SELECT 
+        TO_CHAR("createdAt", ${groupByFormat === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM'}) as date_part,
+        COUNT(*) as count
+      FROM "User"
+      WHERE "createdAt" >= ${fromDate}
+      GROUP BY date_part
+      ORDER BY date_part ASC
+    `;
 
-    const regMap = new Map<string, number>();
-    recentUsers.forEach(u => {
-        const d = u.createdAt;
-        const key = groupBy === 'day' 
-            ? d.toISOString().split('T')[0] 
-            : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        regMap.set(key, (regMap.get(key) || 0) + 1);
-    });
-
+    const regMap = new Map(registrationStats.map(s => [s.date_part, Number(s.count)]));
     const registrationChart = [];
     const end = new Date();
-    if (groupBy === 'day') {
-        for (let d = new Date(fromDate); d <= end; d.setDate(d.getDate() + 1)) {
-            const key = d.toISOString().split('T')[0];
-            const display = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-            registrationChart.push({ date: display, rawDate: key, users: regMap.get(key) || 0 });
-        }
-    } else {
-        for (let d = new Date(fromDate); d <= end; d.setMonth(d.getMonth() + 1)) {
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            const display = d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-            registrationChart.push({ date: display, rawDate: key, users: regMap.get(key) || 0 });
-        }
+    
+    for (let d = new Date(fromDate); d <= end; ) {
+      const key = d.toISOString().split('T')[0].slice(0, groupByFormat === 'day' ? 10 : 7);
+      const display = d.toLocaleDateString('en-US', groupByFormat === 'day' ? { month: 'short', day: 'numeric' } : { month: 'short', year: 'numeric' });
+      registrationChart.push({ date: display, rawDate: key, users: regMap.get(key) || 0 });
+      
+      if (groupByFormat === 'day') d.setDate(d.getDate() + 1);
+      else d.setMonth(d.getMonth() + 1);
     }
 
-    // 1. KPI: Active Today (Distinct users updating a task or a day)
-    const activeTasks = await prisma.task.findMany({
-      where: { updatedAt: { gte: today } },
-      select: { userId: true },
-      distinct: ['userId']
-    });
-    const activeDays = await prisma.day.findMany({
-      where: { date: { gte: today } },
-      select: { userId: true },
-      distinct: ['userId']
-    });
-    
-    const activeUserIds = new Set([
-      ...activeTasks.map(t => t.userId),
-      ...activeDays.map(d => d.userId)
-    ]);
-    const activeToday = activeUserIds.size;
-
-    // 2. Growth Chart (Last 30 days active count) - Optimized to 2 queries
-    const growthChart = [];
+    // ── 3. Growth & Performance (Parallelized) ────────────────────────────────
     const thirtyDaysAgo = new Date(today);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const allTasks = await prisma.task.findMany({
-      where: { updatedAt: { gte: thirtyDaysAgo } },
-      select: { userId: true, updatedAt: true }
-    });
-    const allDays = await prisma.day.findMany({
-      where: { date: { gte: thirtyDaysAgo } },
-      select: { userId: true, date: true }
-    });
+    const [dailyActiveStats, resolvedFeedbacks, feedbacks] = await Promise.all([
+      // Optimized growth chart query: union of task updates and day entries
+      prisma.$queryRaw`
+        SELECT date_part, COUNT(DISTINCT "userId") as active_count
+        FROM (
+          SELECT "userId", TO_CHAR("updatedAt", 'YYYY-MM-DD') as date_part FROM "Task" WHERE "updatedAt" >= ${thirtyDaysAgo}
+          UNION ALL
+          SELECT "userId", TO_CHAR("date", 'YYYY-MM-DD') as date_part FROM "Day" WHERE "date" >= ${thirtyDaysAgo}
+        ) as combined
+        GROUP BY date_part
+        ORDER BY date_part ASC
+      `,
+      prisma.feedback.findMany({
+        where: { status: 'RESOLVED', type: 'BUG' },
+        orderBy: { resolvedAt: 'desc' },
+        take: 10,
+        select: { id: true, createdAt: true, resolvedAt: true }
+      }),
+      prisma.feedback.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 50 // Limit initial load
+      })
+    ]);
 
-    const dailyActiveMap = new Map<string, Set<string>>();
-
-    allTasks.forEach(t => {
-      const dateKey = t.updatedAt.toISOString().split('T')[0];
-      if (!dailyActiveMap.has(dateKey)) dailyActiveMap.set(dateKey, new Set());
-      dailyActiveMap.get(dateKey)!.add(t.userId);
-    });
-
-    allDays.forEach(d => {
-      const dateKey = d.date.toISOString().split('T')[0];
-      if (!dailyActiveMap.has(dateKey)) dailyActiveMap.set(dateKey, new Set());
-      dailyActiveMap.get(dateKey)!.add(d.userId);
-    });
-
+    const activeMap = new Map((dailyActiveStats as any[]).map(s => [s.date_part, Number(s.active_count)]));
+    const growthChart = [];
     for (let i = 29; i >= 0; i--) {
-       const d = new Date(today);
-       d.setDate(d.getDate() - i);
-       const dateKey = d.toISOString().split('T')[0];
-       
-       growthChart.push({
-         date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-         activeUsers: dailyActiveMap.get(dateKey)?.size || 0
-       });
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().split('T')[0];
+      growthChart.push({
+        date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        activeUsers: activeMap.get(key) || 0
+      });
     }
 
-    // 3. Performance Chart (Last 10 bugs, resolution time in hours)
-    const resolvedFeedbacks = await prisma.feedback.findMany({
-      where: { status: 'RESOLVED', type: 'BUG' },
-      orderBy: { resolvedAt: 'desc' },
-      take: 10
-    });
-    
-    const performanceChart = resolvedFeedbacks.reverse().map(f => {
-      const ms = f.resolvedAt!.getTime() - f.createdAt.getTime();
-      const hours = Math.round((ms / (1000 * 60 * 60)) * 10) / 10;
-      return {
-        id: f.id.slice(0, 8),
-        hours
-      };
-    });
-
-    // 4. Feedback List
-    const feedbacks = await prisma.feedback.findMany({
-      orderBy: { createdAt: 'desc' }
-    });
+    const performanceChart = resolvedFeedbacks.reverse().map(f => ({
+      id: f.id.slice(0, 8),
+      hours: Math.round(((f.resolvedAt!.getTime() - f.createdAt.getTime()) / (1000 * 60 * 60)) * 10) / 10
+    }));
 
     res.json({
       activeToday,
@@ -290,9 +282,8 @@ export const handleFeedbackAction = async (req: Request, res: Response, next: Ne
      if (action === 'fix') {
        await prisma.feedback.update({ where: { id }, data: { status: 'IN_PROGRESS' } });
        
-       if (feedback.traceId) {
-         triggerCodeMind(feedback);
-       }
+       // Trigger Code-Mind regardless of traceId (manual bugs are supported)
+       triggerCodeMind(feedback);
        res.json({ success: true, message: 'Triggered Code-Mind' });
        return;
      }
@@ -321,7 +312,7 @@ export const handleTelegramWebhook = async (req: Request, res: Response, next: N
           const feedback = await prisma.feedback.findUnique({ where: { id } });
           if (feedback) {
              await prisma.feedback.update({ where: { id }, data: { status: 'IN_PROGRESS' } });
-             if (feedback.traceId) triggerCodeMind(feedback);
+                          triggerCodeMind(feedback);
              
              const adminUrl = process.env.ADMIN_URL || 'http://localhost:5173';
              const fixUrl = `${adminUrl}/app/fix/${id}`;
@@ -360,7 +351,7 @@ export const postPipelineUpdate = async (req: Request, res: Response, next: Next
         level,
         source: 'codeMindPipeline',
         message: message,
-        userId: feedbackId, // Reusing userId field for feedbackId mapping
+        context: { feedbackId }
       }
     });
 
@@ -377,7 +368,10 @@ export const getPipelineLogs = async (req: Request, res: Response, next: NextFun
     const logs = await prisma.appLog.findMany({
       where: {
         source: 'codeMindPipeline',
-        userId: feedbackId
+        context: {
+          path: ['feedbackId'],
+          equals: feedbackId
+        }
       },
       orderBy: { createdAt: 'asc' }
     });

@@ -73,30 +73,37 @@ export class AnalyticsService {
     // ── Core: compute live weekly dashboard ───────────────────────────────────
 
     async computeDashboard(userId: string, date: Date = new Date()): Promise<SprintDashboard> {
-        // ── 0. User timezone & sprint window (pure UTC string arithmetic) ──────────
-        const userRecord = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { timezone: true },
-        });
+        // ── 0. Initial Setup & Parallel Fetch ──────────────────────────────────────
+        
+        // Fetch timezone and planned checkpoints in parallel
+        const [userRecord, dayRecords] = await Promise.all([
+            prisma.user.findUnique({
+                where: { id: userId },
+                select: { timezone: true },
+            }),
+            prisma.day.findMany({
+                where: {
+                    userId,
+                    date: {
+                        gte: subDays(startOfWeek(date), 2), // Buffer for TZ
+                        lte: endOfDay(endOfWeek(date)),
+                    },
+                },
+            }),
+        ]);
+
         const tz = userRecord?.timezone || 'Asia/Kolkata';
-
-        // Convert any UTC Date → YYYY-MM-DD in user's timezone (uses date-fns-tz)
         const toLocalDate = (d: Date) => formatInTimeZone(d, tz, 'yyyy-MM-dd');
-
-        // Today as YYYY-MM-DD in user's TZ
         const todayLocal = toLocalDate(date);
-
-        // Sprint boundaries as YYYY-MM-DD strings computed purely from the date string
         const { startStr: sprintStartStr, endStr: sprintEndStr } = this.sprintBounds(todayLocal);
 
-        // DB query range: pad ±1 day around sprint so no UTC-offset checkpoint is missed.
-        // All filtering by sprint membership happens in JS using toLocalDate().
+        // Pad range for query
         const queryStart = new Date(sprintStartStr + 'T00:00:00Z');
         queryStart.setUTCDate(queryStart.getUTCDate() - 1);
         const queryEnd = new Date(sprintEndStr + 'T23:59:59Z');
         queryEnd.setUTCDate(queryEnd.getUTCDate() + 1);
 
-        // ── 1. Fetch checkpoints near the sprint; filter in JS by user TZ ─────────
+        // Fetch planned checkpoints and task-specific checkpoints in parallel
         const allPlannedRaw = await prisma.taskCheckpoint.findMany({
             where: {
                 task: { userId },
@@ -105,45 +112,27 @@ export class AnalyticsService {
             orderBy: { orderIndex: 'asc' },
         });
 
-        // DEBUG
-        console.log('\n=== ANALYTICS DEBUG ===');
-        console.log('TZ:', tz);
-        console.log('todayLocal:', todayLocal);
-        console.log('sprint:', sprintStartStr, '->', sprintEndStr);
-        console.log('queryStart (UTC):', queryStart.toISOString());
-        console.log('queryEnd   (UTC):', queryEnd.toISOString());
-        console.log('raw checkpoints from DB:', allPlannedRaw.map(cp => ({
-            id: cp.id.slice(0, 8),
-            targetDate_UTC: cp.targetDate.toISOString(),
-            targetDate_localStr: toLocalDate(cp.targetDate),
-            isCompleted: cp.isCompleted,
-            completedAt_UTC: cp.completedAt?.toISOString(),
-        })));
-
-        // Keep only those whose targetDate calendar-day (user TZ) is within sprint
-        const planned = allPlannedRaw.filter(cp => {
-            const d = toLocalDate(cp.targetDate);
-            const inSprint = d >= sprintStartStr && d <= sprintEndStr;
-            console.log(`  cp ${cp.id.slice(0, 8)} targetLocalDate=${d} inSprint=${inSprint}`);
-            return inSprint;
-        });
-
-        // ── 2. Fetch ALL checkpoints for the user to support EARLY detection ──────
-        // EARLY check needs the next checkpoint's targetDate and its Day entries.
-        const allCheckpoints = await prisma.taskCheckpoint.findMany({
-            where: { task: { userId } },
+        // Identify tasks in this sprint and fetch their specific checkpoints surgicaly
+        const activeTaskIds = [...new Set(allPlannedRaw.map(cp => cp.taskId))];
+        
+        // Parallel fetch for task-specific checkpoints to avoid "fetch all"
+        const taskCheckpoints = await prisma.taskCheckpoint.findMany({
+            where: { taskId: { in: activeTaskIds } },
             orderBy: { orderIndex: 'asc' },
+            select: { id: true, taskId: true, orderIndex: true, targetDate: true, isCompleted: true, completedAt: true }
         });
 
-        // Build a map of checkpointId → Day[] for this sprint (for EARLY detection)
-        const dayRecords = await prisma.day.findMany({
-            where: {
-                userId,
-                date: { gte: queryStart, lte: queryEnd },
-            },
-        });
+        // ── 1. Map-based Optimisation ─────────────────────────────────────────────
+        
+        // Group task checkpoints for O(1) lookup
+        const checkpointsByTask = new Map<string, typeof taskCheckpoints>();
+        for (const cp of taskCheckpoints) {
+            const arr = checkpointsByTask.get(cp.taskId) ?? [];
+            arr.push(cp);
+            checkpointsByTask.set(cp.taskId, arr);
+        }
 
-        // daysByCheckpoint: checkpointId → Day[]
+        // Group day records for O(1) lookup
         const daysByCheckpoint = new Map<string, typeof dayRecords>();
         for (const d of dayRecords) {
             const arr = daysByCheckpoint.get(d.checkpointId) ?? [];
@@ -151,9 +140,12 @@ export class AnalyticsService {
             daysByCheckpoint.set(d.checkpointId, arr);
         }
 
-        const now = date;
+        // ── 2. Categorisation ─────────────────────────────────────────────────────
 
-        // ── 3. Categorise each planned checkpoint ────────────────────────────────
+        const planned = allPlannedRaw.filter(cp => {
+            const d = toLocalDate(cp.targetDate);
+            return d >= sprintStartStr && d <= sprintEndStr;
+        });
 
         const earlyCompleted: any[] = [];
         const onTimeCompleted: any[] = [];
@@ -162,76 +154,54 @@ export class AnalyticsService {
 
         for (const cp of planned) {
             if (cp.isCompleted) {
-                // Find next checkpoint (higher orderIndex, same task)
-                const nextCp = allCheckpoints.find(
-                    c => c.taskId === cp.taskId && c.orderIndex > cp.orderIndex
-                );
+                // Find next checkpoint using the pre-grouped Map (O(1) vs O(N))
+                const taskCps = checkpointsByTask.get(cp.taskId) || [];
+                const nextCp = taskCps.find(c => c.orderIndex > cp.orderIndex);
 
-                // EARLY_COMPLETED: next CP exists AND there's a Day record for it
-                // with date < startOfDay(nextCp.targetDate)
                 let isEarly = false;
                 if (nextCp) {
                     const nextDays = daysByCheckpoint.get(nextCp.id) ?? [];
-                    isEarly = nextDays.some(d => d.date < startOfDay(nextCp.targetDate));
+                    const nextCpTargetStart = startOfDay(nextCp.targetDate);
+                    isEarly = nextDays.some(d => d.date < nextCpTargetStart);
                 }
 
                 if (isEarly) {
-                    console.log(`  cp ${cp.id.slice(0, 8)} -> EARLY`);
                     earlyCompleted.push(cp);
                 } else if (cp.completedAt) {
                     const completedDay = toLocalDate(cp.completedAt);
                     const targetDay = toLocalDate(cp.targetDate);
-                    console.log(`  cp ${cp.id.slice(0, 8)} completedDay=${completedDay} targetDay=${targetDay}`);
                     if (completedDay > targetDay) {
-                        console.log(`  cp ${cp.id.slice(0, 8)} -> RECOVERED`);
                         recovered.push(cp);
                     } else {
-                        console.log(`  cp ${cp.id.slice(0, 8)} -> ON_TIME`);
                         onTimeCompleted.push(cp);
                     }
                 } else {
-                    console.log(`  cp ${cp.id.slice(0, 8)} -> ON_TIME (no completedAt)`);
                     onTimeCompleted.push(cp);
                 }
             } else {
                 const targetDay = toLocalDate(cp.targetDate);
-                console.log(`  cp ${cp.id.slice(0, 8)} NOT completed targetDay=${targetDay} todayLocal=${todayLocal}`);
                 if (targetDay < todayLocal) {
-                    console.log(`  cp ${cp.id.slice(0, 8)} -> OVERDUE`);
                     overduePending.push(cp);
-                } else {
-                    console.log(`  cp ${cp.id.slice(0, 8)} -> IN_PROGRESS (today or future)`);
                 }
-                // targetDay === todayLocal → in-progress today, not yet overdue
-                // targetDay > todayLocal  → future checkpoint
             }
         }
 
-        // ── 4. Rates ─────────────────────────────────────────────────────────────
+        // ── 3. Rates & Metrics ──────────────────────────────────────────────────
 
         const totalCompleted = earlyCompleted.length + onTimeCompleted.length + recovered.length;
         const totalPlanned = planned.length;
 
-        const executionRate = totalPlanned === 0
-            ? 100
-            : Math.round((totalCompleted / totalPlanned) * 100);
-
+        const executionRate = totalPlanned === 0 ? 100 : Math.round((totalCompleted / totalPlanned) * 100);
         const totalOverdue = overduePending.length + recovered.length;
-        const recoveryRate = totalOverdue === 0
-            ? 100
-            : Math.round((recovered.length / totalOverdue) * 100);
+        const recoveryRate = totalOverdue === 0 ? 100 : Math.round((recovered.length / totalOverdue) * 100);
 
-        // ── 5. Daily effort & active days ────────────────────────────────────────
-        // Initialize all 7 sprint days to 0 (ISO date keys: YYYY-MM-DD)
-        const TOTAL_SPRINT_DAYS = 7;
         const dailyEffort: Record<string, number> = {};
-        for (let i = 0; i < TOTAL_SPRINT_DAYS; i++) {
+        for (let i = 0; i < 7; i++) {
             const d = new Date(sprintStartStr + 'T12:00:00Z');
             d.setUTCDate(d.getUTCDate() + i);
             dailyEffort[d.toISOString().slice(0, 10)] = 0;
         }
 
-        // Accumulate Day records (one row per user/checkpoint/day) into the map
         let totalEffort = 0;
         for (const d of dayRecords) {
             const key = toLocalDate(d.date);
@@ -241,34 +211,18 @@ export class AnalyticsService {
             totalEffort += d.effort;
         }
 
-        const activeDays = Object.values(dailyEffort).filter(e => e > 0).length;
-        const missedDays = TOTAL_SPRINT_DAYS - activeDays;
-
-        // ── 6. Overachievement days ─────────────────────────────────────────────
+        const effortValues = Object.values(dailyEffort);
+        const activeDays = effortValues.filter(e => e > 0).length;
+        const missedDays = 7 - activeDays;
         const avgEffort = activeDays > 0 ? totalEffort / activeDays : 0;
-        const overachievementDays = Object.values(dailyEffort).filter(e => e > avgEffort).length;
+        const overachievementDays = effortValues.filter(e => e > avgEffort).length;
 
-        // ── 7. Scores ────────────────────────────────────────────────────────────
-
-        const consistency = Math.min(Math.round((activeDays / TOTAL_SPRINT_DAYS) * 100), 100);
-
-        const avgEffortPerActiveDay = activeDays > 0 ? totalEffort / activeDays : 0;
-        const intensity = Math.min(Math.round(avgEffortPerActiveDay), 100);
-
-        const disciplineScore = Math.round(
-            (consistency * 0.25) +
-            (executionRate * 0.25) +
-            (recoveryRate * 0.25) +
-            (intensity * 0.25)
-        );
-
-        // ── 8. Build response ───────────────────────────────────────────────────
+        const consistency = Math.min(Math.round((activeDays / 7) * 100), 100);
+        const intensity = Math.min(Math.round(activeDays > 0 ? totalEffort / activeDays : 0), 100);
+        const disciplineScore = Math.round((consistency * 0.25) + (executionRate * 0.25) + (recoveryRate * 0.25) + (intensity * 0.25));
 
         return {
-            sprintWindow: {
-                start: sprintStartStr,
-                end: sprintEndStr,
-            },
+            sprintWindow: { start: sprintStartStr, end: sprintEndStr },
             checkpoints: {
                 planned: { count: totalPlanned, items: planned },
                 earlyCompleted: { count: earlyCompleted.length, items: earlyCompleted },
@@ -277,13 +231,7 @@ export class AnalyticsService {
                 overduePending: { count: overduePending.length, items: overduePending },
             },
             rates: { executionRate, recoveryRate },
-            activity: {
-                activeDays,
-                missedDays,
-                overachievementDays,
-                totalEffort,
-                dailyEffort,
-            },
+            activity: { activeDays, missedDays, overachievementDays, totalEffort, dailyEffort },
             scores: { consistency, intensity, disciplineScore },
         };
     }

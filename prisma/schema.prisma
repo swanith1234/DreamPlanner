@@ -165,7 +165,7 @@ model UserPreference {
   userId String @unique
 
   motivationTone        MotivationTone @default(NEUTRAL)
-  notificationFrequency Int // minutes
+  notificationFrequency Int @default(180) // minutes
 
   sleepStart String // "23:30"
   sleepEnd   String // "06:30"
@@ -517,6 +517,8 @@ model Task {
   updatedAt         DateTime           @updatedAt
   generatedInsights GeneratedInsight[]
   checkpoints       TaskCheckpoint[]
+
+  @@index([userId, status])
 }
 
 ///////////////////////
@@ -554,6 +556,8 @@ model TaskCheckpoint {
   days Day[]
 
   createdAt DateTime @default(now())
+
+  @@index([taskId, targetDate])
 }
 
 ///////////////////////

@@ -1,11 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 
-const globalForPrisma = global as unknown as { basePrisma: PrismaClient };
+const globalForPrisma = global as unknown as { basePrisma: PrismaClient | undefined };
 
 const basePrisma =
-  globalForPrisma.basePrisma ||
+  globalForPrisma.basePrisma ??
   new PrismaClient({
     log: ['error', 'warn'],
+    // Explicitly configure pooling if needed via URL, 
+    // but Prisma handles this automatically from DATABASE_URL.
   });
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.basePrisma = basePrisma;

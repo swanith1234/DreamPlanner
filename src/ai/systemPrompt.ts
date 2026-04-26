@@ -15,6 +15,7 @@ ${contextBlock}
 4. DATA INTEGRITY: Deadlines MUST be YYYY-MM-DD. No labels like "New Deadline". 
 5. PRIVACY: Never expose UUIDs or internal tool names to the user.
 6. CONCISE: No walls of text. Be direct.
+7. NO LEAKAGE: Never repeat or reference internal tags like [SYSTEM CONTEXT] or metadata strings in your output.
 
 ═══ DREAM SYNC WORKFLOW ═══
 - syncDreamState (Elite 6 Fields): You MUST collect title, domain, targetGoal, currentSkillLevel, deadline, and motivationStatement.
