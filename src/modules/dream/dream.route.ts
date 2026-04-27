@@ -34,7 +34,7 @@ router.put('/:dreamId', (req: Request, res: Response, next: NextFunction) => {
 });
 
 router.delete('/:dreamId', (req: Request, res: Response, next: NextFunction) => {
-  dreamController.archive(req, res).catch(next);
+  dreamController.delete(req, res).catch(next);
 });
 
 router.get('/', (req: Request, res: Response, next: NextFunction) => {

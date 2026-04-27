@@ -29,9 +29,10 @@ export class TaskService {
     if (!dream || dream.userId !== userId) throw new NotFoundError('Dream');
 
     const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
     const deadline = new Date(input.deadline);
-    if (deadline <= now) throw new ValidationError('Task deadline must be in the future');
+    if (deadline < startOfToday) throw new ValidationError('Task deadline cannot be in the past');
 
     if (input.startDate) {
       const startDate = new Date(input.startDate);
@@ -52,6 +53,13 @@ export class TaskService {
       if (!milestone) throw new NotFoundError('Milestone not found');
     }
 
+    // If no checkpoints provided and deadline is today, use title as default checkpoint
+    const finalCheckpoints = (input.checkpoints && input.checkpoints.length > 0) 
+      ? input.checkpoints 
+      : (deadline.toDateString() === now.toDateString() 
+          ? [{ title: input.title, targetDate: deadline.toISOString(), orderIndex: 0 }] 
+          : []);
+
     // Create task + checkpoints (no stored "active" state — derived at read time)
     const task = await prisma.task.create({
       data: {
@@ -65,9 +73,8 @@ export class TaskService {
         priority: input.priority,
         status: TaskStatus.PENDING,
         checkpoints: {
-          create: (input.checkpoints ?? []).map(cp => {
+          create: finalCheckpoints.map(cp => {
             // Force YYYY-MM-DD to midday UTC so it never shifts calendar day
-            // Extract the first 10 chars (YYYY-MM-DD) even if frontend sends full ISO.
             const dateStr = cp.targetDate.substring(0, 10);
             const safeDate = new Date(`${dateStr}T12:00:00Z`);
             return {

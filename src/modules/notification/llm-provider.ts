@@ -1,7 +1,7 @@
 // src/modules/notification/llm-provider.ts
-import { groq, GROQ_MODEL } from '../../config/ai';
 import { logger } from '../../utils/logger';
 import { NotificationType, MotivationTone } from '@prisma/client';
+import { buildNotificationPrompt } from '../../utils/notificationPromptBuilder';
 
 export interface MessageGenerationInput {
   notificationType: string;
@@ -17,24 +17,35 @@ export interface MessageGenerationInput {
   statusEvaluation: any; // dynamically filled based on caseType
 }
 
+import { 
+  groq, GROQ_MODEL, 
+  sambanova, SAMBANOVA_MODEL, 
+  cerebras, CEREBRAS_MODEL, 
+  deepseek, DEEPSEEK_MODEL, 
+  openRouter, OPENROUTER_CHEAP_MODEL 
+} from '../../config/ai';
 
-import { buildNotificationPrompt } from '../../utils/notificationPromptBuilder';
+const LLM_FALLBACK_CHAIN = [
+  { name: 'Groq', client: groq, model: GROQ_MODEL },
+  { name: 'DeepSeek', client: deepseek, model: DEEPSEEK_MODEL },
+  { name: 'SambaNova', client: sambanova, model: SAMBANOVA_MODEL },
+  { name: 'Cerebras', client: cerebras, model: CEREBRAS_MODEL },
+  { name: 'OpenRouter', client: openRouter, model: OPENROUTER_CHEAP_MODEL },
+];
 
 /**
- * Generate personalized notification messages using Groq LLM
- * Based on 3-State Interactive JIT Notification Engine rules.
+ * Generate personalized notification messages using a multi-provider fallback chain
  */
 export async function generateNotificationMessageWithLLM(
   input: MessageGenerationInput
 ): Promise<{ message: string; extractedTaskTitle?: string }> {
-  try {
-    const { caseType, userIdentity, statusEvaluation, userTone } = input;
+  const { caseType, userIdentity, statusEvaluation, userTone } = input;
 
-    let baseContext = '';
-    let userPrompt = '';
+  let baseContext = '';
+  let userPrompt = '';
 
-    if (caseType === 'Case1') {
-       baseContext = `You are ${userIdentity.agentName}, IgniteMate's push notification agent.
+  if (caseType === 'Case1') {
+     baseContext = `You are ${userIdentity.agentName}, IgniteMate's push notification agent.
 Your objective is to trigger immediate execution.
 
 Prompt Instruction:
@@ -45,15 +56,15 @@ Prompt Instruction:
 - Include the user's motivational_context to personalize the tone.
 - Length: Strictly 1 to 2 short sentences. No bold. No Markdown.`;
 
-       userPrompt = `Inputs:
+     userPrompt = `Inputs:
 - Dream: ${userIdentity.dreamTitle}
 - Motivational Context: ${userIdentity.motivationStatement}
 - Progress Made Today: ${statusEvaluation.progressMadeToday || 'None'}
 - Time Remaining in Day: ${statusEvaluation.timeRemainingInDay} hours
 - Today's Checkpoints: ${statusEvaluation.todaysCheckpoints?.join(', ') || 'Your pending tasks'}`;
 
-    } else {
-       baseContext = `You are ${userIdentity.agentName}, IgniteMate's push notification agent.
+  } else {
+     baseContext = `You are ${userIdentity.agentName}, IgniteMate's push notification agent.
 The user has an active dream but their task queue is empty.
 
 Prompt Instruction:
@@ -66,48 +77,67 @@ Crucial Formatting MUST FOLLOW:
 - Your output MUST end with an actionable confirmation, strictly: "Reply YES to add this to your queue."
 - Maximum 2 sentences. No markdown formatting.`;
 
-       userPrompt = `Inputs:
+     userPrompt = `Inputs:
 - Dream: ${userIdentity.dreamTitle}
 - Completed Tasks: ${statusEvaluation.completedTasks}
 - First Pending Milestone: ${statusEvaluation.firstPendingMilestone}`;
+  }
+
+  const systemPrompt = buildNotificationPrompt(userTone, baseContext);
+
+  let generatedMessage = '';
+  let lastError = null;
+
+  // ── FALLBACK CHAIN EXECUTION ─────────────────────────────────────────────
+  for (const provider of LLM_FALLBACK_CHAIN) {
+    try {
+      const response = await provider.client.chat.completions.create({
+        model: provider.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 150,
+      });
+
+      generatedMessage = response.choices[0]?.message?.content?.trim() || '';
+      
+      if (generatedMessage) {
+        await logger.info('llm', `Message generated successfully via ${provider.name}`, {
+          caseType,
+          model: provider.model
+        });
+        break; // Success!
+      }
+    } catch (error: any) {
+      lastError = error;
+      const isRateLimit = error.status === 429 || error.message?.toLowerCase().includes('rate limit') || error.message?.toLowerCase().includes('token limit');
+      
+      await logger.warn('llm', `Provider ${provider.name} failed`, {
+        error: error.message,
+        isRateLimit,
+        nextProvider: LLM_FALLBACK_CHAIN[LLM_FALLBACK_CHAIN.indexOf(provider) + 1]?.name || 'None'
+      });
+
+      if (!isRateLimit && error.status !== 500 && error.status !== 503) {
+        // If it's a prompt error (400) or auth error (401), we might want to stop, 
+        // but for notifications, we try to be resilient and move to the next provider anyway.
+      }
     }
+  }
 
-    const systemPrompt = buildNotificationPrompt(userTone, baseContext);
-
-    const response = await groq.chat.completions.create({
-      model: GROQ_MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.7,
-      max_tokens: 150,
-    });
-
-    const generatedMessage = response.choices[0]?.message?.content?.trim() || '';
-
-    if (!generatedMessage) {
-      return { message: getDefaultMessage(input.notificationType as any) };
-    }
-
-    await logger.info('llm', 'Message generated', {
-      caseType,
-      messageLength: generatedMessage.length,
-    });
-
-    let extractedTaskTitle: string | undefined = undefined;
-    if (caseType === 'Case2') {
-       extractedTaskTitle = generatedMessage.replace(/Reply YES.*/i, '').trim();
-    }
-
-    return { message: generatedMessage, extractedTaskTitle };
-  } catch (error: any) {
-    await logger.error('llm', 'Failed to generate message', {
-      error: error.message,
-      caseType: input.caseType,
-    });
+  if (!generatedMessage) {
+    await logger.error('llm', 'All providers in fallback chain failed', { error: lastError?.message });
     return { message: getDefaultMessage(input.notificationType as any) };
   }
+
+  let extractedTaskTitle: string | undefined = undefined;
+  if (caseType === 'Case2') {
+     extractedTaskTitle = generatedMessage.replace(/Reply YES.*/i, '').trim();
+  }
+
+  return { message: generatedMessage, extractedTaskTitle };
 }
 
 /**

@@ -41,11 +41,16 @@ export class DreamService {
     if (input.description) updateData.description = input.description;
     if (input.motivationStatement) updateData.motivationStatement = input.motivationStatement;
     if (input.deadline) {
-      const deadline = new Date(input.deadline);
-      if (deadline <= new Date()) {
-        throw new ValidationError('Deadline must be in the future');
+      const newDeadline = new Date(input.deadline);
+      const currentDeadline = new Date(dream.deadline);
+      
+      // Only validate if the deadline is actually being changed
+      if (newDeadline.getTime() !== currentDeadline.getTime()) {
+        if (newDeadline <= new Date()) {
+          throw new ValidationError('Deadline must be in the future');
+        }
+        updateData.deadline = newDeadline;
       }
-      updateData.deadline = deadline;
     }
 
     const updated = await prisma.dream.update({

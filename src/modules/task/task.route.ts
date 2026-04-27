@@ -25,7 +25,7 @@ router.post('/:taskId/complete', (req: Request, res: Response, next: NextFunctio
 });
 
 router.delete('/:taskId', (req: Request, res: Response, next: NextFunction) => {
-  taskController.archive(req, res).catch(next);
+  taskController.delete(req, res).catch(next);
 });
 
 router.put('/:taskId/checkpoints/:checkpointId', (req: Request, res: Response, next: NextFunction) => {

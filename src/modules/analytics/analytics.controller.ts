@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../types';
 import { analyticsService } from './analytics.service';
+import { globalCache, MemoryCache } from '../../utils/cache';
 
 export class AnalyticsController {
 
@@ -15,11 +16,25 @@ export class AnalyticsController {
             const userId = req.userId;
             if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
+            const queryParams: any = {};
+            if (req.query.date) queryParams.date = req.query.date;
+            if (req.query.range) queryParams.range = req.query.range;
+            
+            const cacheKey = MemoryCache.generateKey('dashboard', userId, queryParams);
+            const cachedData = globalCache.get(cacheKey);
+            
+            if (cachedData) {
+                res.json(cachedData);
+                return;
+            }
+
             const date = req.query.date
                 ? new Date(req.query.date as string)
                 : new Date();
 
             const dashboard = await analyticsService.computeDashboard(userId, date);
+            
+            globalCache.set(cacheKey, dashboard);
             res.json(dashboard);
         } catch (error: any) {
             res.status(500).json({ error: error.message });
@@ -34,7 +49,18 @@ export class AnalyticsController {
         try {
             const userId = req.userId;
             if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+            
+            const cacheKey = MemoryCache.generateKey('sprints_list', userId);
+            const cachedData = globalCache.get(cacheKey);
+            
+            if (cachedData) {
+                res.json(cachedData);
+                return;
+            }
+
             const sprints = await analyticsService.listPastSprints(userId);
+            
+            globalCache.set(cacheKey, sprints);
             res.json(sprints);
         } catch (error: any) {
             res.status(500).json({ error: error.message });
@@ -50,8 +76,19 @@ export class AnalyticsController {
             const userId = req.userId;
             if (!userId) return res.status(401).json({ error: 'Unauthorized' });
             const { weekStart } = req.params;
+
+            const cacheKey = MemoryCache.generateKey('sprint_snapshot', userId, { weekStart });
+            const cachedData = globalCache.get(cacheKey);
+
+            if (cachedData) {
+                res.json(cachedData);
+                return;
+            }
+
             const snapshot = await analyticsService.getSprintSnapshot(userId, weekStart);
             if (!snapshot) return res.status(404).json({ error: 'Sprint snapshot not found' });
+            
+            globalCache.set(cacheKey, snapshot);
             res.json(snapshot);
         } catch (error: any) {
             res.status(500).json({ error: error.message });
