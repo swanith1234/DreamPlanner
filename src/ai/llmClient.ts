@@ -33,9 +33,9 @@ export async function executeWithFallback(
     // Cerebras: 1M tokens/day free, extremely fast inference
     // Groq: 100k tokens/day free, fast LPU inference
     const providers = [
-        { client: sambanova, model: SAMBANOVA_MODEL, label: 'Sambanova' },
-        { client: cerebras, model: CEREBRAS_MODEL, label: 'Cerebras' },
         { client: groq, model: 'llama-3.3-70b-versatile', label: 'Groq' },
+        { client: cerebras, model: CEREBRAS_MODEL, label: 'Cerebras' },
+        { client: sambanova, model: SAMBANOVA_MODEL, label: 'Sambanova' },
     ];
 
     let lastError: any = null;

@@ -1,11 +1,13 @@
 generator client {
   provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+  extensions = [vector]
 }
 
 ///////////////////////
@@ -229,6 +231,7 @@ model Dream {
   deadline            DateTime
   impactScore         Int
   additionalContext   String?
+  embedding           Unsupported("vector(384)")?
 
   status DreamStatus @default(DRAFT)
 
@@ -503,6 +506,7 @@ model Task {
   deadline          DateTime
   estimatedDuration Int?
   priority          Int
+  embedding         Unsupported("vector(384)")?
   status            TaskStatus      @default(PENDING)
   completedAt       DateTime? // ✅ when task was finished
   progressPercent   Int? // 0–100, nullable
@@ -818,4 +822,30 @@ model Feedback {
 
   @@index([traceId])
   @@index([userId])
+}
+
+model ToolRegistry {
+  id                  String   @id @default(uuid())
+  name                String   @unique
+  semanticDescription String   @db.Text
+  rawJsonSchema       Json
+  category            String
+  embedding           Unsupported("vector(384)")?
+  createdAt           DateTime @default(now())
+}
+
+enum ActionSessionStatus {
+  DISCOVERY
+  SLOT_FILLING
+  PENDING_CONFIRM
+}
+
+model ActionSession {
+  id              String              @id @default(uuid())
+  userId          String              @unique
+  targetTool      String
+  collectedFields Json
+  status          ActionSessionStatus @default(DISCOVERY)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 }

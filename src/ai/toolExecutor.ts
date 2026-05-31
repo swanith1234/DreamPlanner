@@ -71,8 +71,7 @@ export async function executeTool(
 ): Promise<any> {
     args = args || {};
 
-    // Log every tool invocation with its args before calling
-    await logger.info('tool-executor', `[TOOL START] ${name}`, { args });
+    await logger.info('tool-executor', `━━━ [TOOL EXECUTE] ▶ "${name}" ━━━`, { args });
 
     try {
         let result: any;
@@ -81,6 +80,7 @@ export async function executeTool(
 
             // ── Tasks — read ────────────────────────────────────────────────
             case 'searchTasks': {
+                await logger.info('tool-executor', `[DISPATCH] searchTasks → taskApi.searchTasks({ q: ${args.q}, dreamId: ${args.dreamId}, status: ${args.status} })`, {});
                 result = await taskApi.searchTasks(token, {
                     q: args.q,
                     dreamId: args.dreamId,
@@ -90,15 +90,18 @@ export async function executeTool(
             }
 
             case 'listTasks':
+                await logger.info('tool-executor', `[DISPATCH] listTasks → taskApi.listTasks({ dreamId: ${args.dreamId}, status: ${args.status} })`, {});
                 result = await taskApi.listTasks(token, args.dreamId, args.status);
                 break;
 
             case 'getTask':
+                await logger.info('tool-executor', `[DISPATCH] getTask → taskApi.getTask({ taskId: ${args.taskId} })`, {});
                 result = await taskApi.getTask(token, args.taskId);
                 break;
 
             // ── Tasks — write ────────────────────────────────────────────────
             case 'createTask':
+                await logger.info('tool-executor', `[DISPATCH] createTask → taskApi.createTask({ title: "${args.title}", deadline: ${args.deadline}, dreamId: ${args.dreamId}, priority: ${args.priority} })`, {});
                 result = await taskApi.createTask(token, {
                     title: args.title,
                     description: args.description,
@@ -116,6 +119,7 @@ export async function executeTool(
                 break;
 
             case 'updateTask':
+                await logger.info('tool-executor', `[DISPATCH] updateTask → taskApi.updateTask({ taskId: ${args.taskId} })`, {});
                 result = await taskApi.updateTask(token, args.taskId, {
                     ...args,
                     priority: args.priority ? coercePriority(args.priority) : undefined,
@@ -124,6 +128,7 @@ export async function executeTool(
                 break;
 
             case 'updateTaskProgress':
+                await logger.info('tool-executor', `[DISPATCH] updateTaskProgress → taskApi.updateTaskProgress({ taskId: ${args.taskId}, value: ${args.value} })`, {});
                 result = await taskApi.updateTaskProgress(
                     token,
                     args.taskId,
@@ -132,19 +137,23 @@ export async function executeTool(
                 break;
 
             case 'completeTask':
+                await logger.info('tool-executor', `[DISPATCH] completeTask → taskApi.completeTask({ taskId: ${args.taskId} })`, {});
                 result = await taskApi.completeTask(token, args.taskId);
                 break;
 
             case 'blockTask':
+                await logger.info('tool-executor', `[DISPATCH] blockTask → taskApi.blockTask({ taskId: ${args.taskId} })`, {});
                 result = await taskApi.blockTask(token, args.taskId);
                 break;
 
             case 'archiveTask':
+                await logger.info('tool-executor', `[DISPATCH] archiveTask → taskApi.archiveTask({ taskId: ${args.taskId} })`, {});
                 result = await taskApi.archiveTask(token, args.taskId);
                 break;
 
             // ── Checkpoints — write ────────────────────────────────────────
             case 'updateCheckpoint':
+                await logger.info('tool-executor', `[DISPATCH] updateCheckpoint → taskApi.updateCheckpoint({ taskId: ${args.taskId}, checkpointId: ${args.checkpointId} })`, {});
                 result = await taskApi.updateCheckpoint(token, args.taskId, args.checkpointId, {
                     title: args.title,
                     targetDate: args.targetDate,
@@ -152,6 +161,7 @@ export async function executeTool(
                 break;
 
             case 'updateCheckpointProgress':
+                await logger.info('tool-executor', `[DISPATCH] updateCheckpointProgress → taskApi.updateCheckpointProgress({ taskId: ${args.taskId}, checkpointId: ${args.checkpointId}, delta: ${args.delta} })`, {});
                 result = await taskApi.updateCheckpointProgress(
                     token,
                     args.taskId,
@@ -162,67 +172,76 @@ export async function executeTool(
                 break;
 
             case 'deleteCheckpoint':
+                await logger.info('tool-executor', `[DISPATCH] deleteCheckpoint → taskApi.deleteCheckpoint({ taskId: ${args.taskId}, checkpointId: ${args.checkpointId} })`, {});
                 result = await taskApi.deleteCheckpoint(token, args.taskId, args.checkpointId);
                 break;
 
             // ── Dreams — read ──────────────────────────────────────────────
             case 'listDreams':
+                await logger.info('tool-executor', `[DISPATCH] listDreams → dreamApi.listDreams({ status: ${args.status || 'ACTIVE'} })`, {});
                 result = await dreamApi.listDreams(token, args.status || 'ACTIVE');
                 break;
 
             case 'searchDreams':
+                await logger.info('tool-executor', `[DISPATCH] searchDreams → dreamApi.searchDreams({ keyword: "${args.keyword}", status: ${args.status} })`, {});
                 result = await dreamApi.searchDreams(token, args.keyword, args.status);
                 break;
 
             case 'getDream':
-                result = await dreamApi.getDream(token, args.dreamId);
-                break;
-
-            case 'getDream':
+                await logger.info('tool-executor', `[DISPATCH] getDream → dreamApi.getDream({ dreamId: ${args.dreamId} })`, {});
                 result = await dreamApi.getDream(token, args.dreamId);
                 break;
 
             case 'syncDreamState':
+                await logger.info('tool-executor', `[DISPATCH] syncDreamState → dreamApi.syncDreamState({ title: "${args.title}", domain: "${args.domain}", deadline: ${args.deadline}, confirmed: ${args.confirmed} })`, {});
                 result = await dreamApi.syncDreamState(token, args);
                 break;
 
             // ── Dreams — write ─────────────────────────────────────────────
             case 'updateDream':
+                await logger.info('tool-executor', `[DISPATCH] updateDream → dreamApi.updateDream({ dreamId: ${args.dreamId} })`, {});
                 result = await dreamApi.updateDream(token, args.dreamId, args);
                 break;
 
             case 'completeDream':
+                await logger.info('tool-executor', `[DISPATCH] completeDream → dreamApi.completeDream({ dreamId: ${args.dreamId} })`, {});
                 result = await dreamApi.completeDream(token, args.dreamId);
                 break;
 
             case 'failDream':
+                await logger.info('tool-executor', `[DISPATCH] failDream → dreamApi.failDream({ dreamId: ${args.dreamId} })`, {});
                 result = await dreamApi.failDream(token, args.dreamId);
                 break;
 
             case 'archiveDream':
+                await logger.info('tool-executor', `[DISPATCH] archiveDream → dreamApi.archiveDream({ dreamId: ${args.dreamId} })`, {});
                 result = await dreamApi.archiveDream(token, args.dreamId);
                 break;
 
             // ── Analytics — read ───────────────────────────────────────────
             case 'getDashboard':
+                await logger.info('tool-executor', `[DISPATCH] getDashboard → analyticsApi.getDashboard()`, {});
                 result = await analyticsApi.getDashboard(token);
                 break;
 
             case 'listSprints':
+                await logger.info('tool-executor', `[DISPATCH] listSprints → analyticsApi.listSprints()`, {});
                 result = await analyticsApi.listSprints(token);
                 break;
 
             case 'getSprint':
+                await logger.info('tool-executor', `[DISPATCH] getSprint → analyticsApi.getSprint({ weekStart: ${args.weekStart} })`, {});
                 result = await analyticsApi.getSprint(token, args.weekStart);
                 break;
 
             // ── User ───────────────────────────────────────────────────────
             case 'getPreferences':
+                await logger.info('tool-executor', `[DISPATCH] getPreferences → userApi.getPreferences()`, {});
                 result = await userApi.getPreferences(token);
                 break;
 
             case 'updatePreferences': {
-                // Fetch current prefs to fill in any values the LLM omitted
+                await logger.info('tool-executor', `[DISPATCH] updatePreferences → userApi.updatePreferences({ motivationTone: ${args.motivationTone} })`, {});
                 let current: any = {};
                 try {
                     current = await userApi.getPreferences(token);
@@ -240,54 +259,57 @@ export async function executeTool(
             }
 
             case 'updateProfile':
+                await logger.info('tool-executor', `[DISPATCH] updateProfile → userApi.updateProfile({ timezone: ${args.timezone} })`, {});
                 result = await userApi.updateProfile(token, { timezone: args.timezone });
                 break;
 
             // ── Notifications ──────────────────────────────────────────────
             case 'listNotifications':
+                await logger.info('tool-executor', `[DISPATCH] listNotifications → notificationApi.listNotifications()`, {});
                 result = await notificationApi.listNotifications(token);
                 break;
 
-            // ── Roadmap ───────────────────────────────────────────────────────
+            // ── Roadmap ────────────────────────────────────────────────────
             case 'generateRoadmap':
+                await logger.info('tool-executor', `[DISPATCH] generateRoadmap → roadmapApi.generateRoadmap({ dreamId: ${args.dreamId} })`, {});
                 result = await roadmapApi.generateRoadmap(token, args.dreamId);
                 break;
 
             case 'activateRoadmap':
+                await logger.info('tool-executor', `[DISPATCH] activateRoadmap → roadmapApi.activateRoadmap({ roadmapId: ${args.roadmapId} })`, {});
                 result = await roadmapApi.activateRoadmap(token, args.roadmapId);
                 break;
 
             case 'getRoadmap':
+                await logger.info('tool-executor', `[DISPATCH] getRoadmap → roadmapApi.getRoadmap({ roadmapId: ${args.roadmapId} })`, {});
                 result = await roadmapApi.getRoadmap(token, args.roadmapId);
                 break;
 
             case 'listRoadmaps':
+                await logger.info('tool-executor', `[DISPATCH] listRoadmaps → roadmapApi.getByDream({ dreamId: ${args.dreamId} })`, {});
                 result = await roadmapApi.getByDream(token, args.dreamId);
                 break;
 
             default:
-                await logger.warn('tool-executor', `[TOOL UNKNOWN] ${name}`, {});
+                await logger.warn('tool-executor', `[TOOL UNKNOWN] No dispatch found for "${name}"`, {});
                 return { error: `Unknown tool: ${name}` };
         }
 
-        // Success log
-        await logger.info('tool-executor', `[TOOL OK] ${name} → ${summarise(name, result)}`, {});
+        await logger.info('tool-executor', `━━━ [TOOL DONE] ✅ "${name}" → ${summarise(name, result)} ━━━`, {});
         return result;
 
     } catch (error: any) {
-        // Extract the deepest error message from Axios responses
         const httpStatus = error?.response?.status;
         const errBody = error?.response?.data;
         const message =
             errBody?.error || errBody?.message ||
             error.message || 'Tool execution failed';
 
-        await logger.error('tool-executor', `[TOOL ERROR] ${name} → HTTP ${httpStatus ?? 'N/A'}: ${message}`, {
+        await logger.error('tool-executor', `━━━ [TOOL ERROR] ❌ "${name}" → HTTP ${httpStatus ?? 'N/A'}: ${message} ━━━`, {
             args,
             responseBody: errBody,
         });
 
-        // Return error to LLM so it can gracefully explain, not crash the backend
         return {
             error: message,
             httpStatus,

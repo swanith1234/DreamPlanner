@@ -1,4 +1,5 @@
 import prisma from '../../config/database';
+import { generateEmbedding } from '../../lib/embeddings';
 import { logger } from '../../utils/logger';
 import { dreamValidator } from './dream.validator';
 import {
@@ -57,6 +58,14 @@ export class DreamService {
       where: { id: dreamId },
       data: updateData,
     });
+
+    if (input.title) {
+        try {
+            const queryEmbedding = await generateEmbedding(input.title);
+            const embeddingStr = `[${queryEmbedding.join(',')}]`;
+            await prisma.$executeRaw`UPDATE "Dream" SET "embedding" = ${embeddingStr}::vector WHERE "id" = ${dreamId}`;
+        } catch (e) {}
+    }
 
     await logger.info('dream', 'Dream updated', { dreamId }, userId);
     return updated;
@@ -180,6 +189,12 @@ export class DreamService {
         status: DreamStatus.ACTIVE, // Default to ACTIVE instead of DRAFT per user request
       },
     });
+
+    try {
+        const queryEmbedding = await generateEmbedding(input.title);
+        const embeddingStr = `[${queryEmbedding.join(',')}]`;
+        await prisma.$executeRaw`UPDATE "Dream" SET "embedding" = ${embeddingStr}::vector WHERE "id" = ${dream.id}`;
+    } catch (e: any) {}
 
     await logger.info(
       'dream',
@@ -510,6 +525,12 @@ export class DreamService {
         status: DreamStatus.ACTIVE,
       },
     });
+
+    try {
+        const queryEmbedding = await generateEmbedding(draft.title);
+        const embeddingStr = `[${queryEmbedding.join(',')}]`;
+        await prisma.$executeRaw`UPDATE "Dream" SET "embedding" = ${embeddingStr}::vector WHERE "id" = ${dream.id}`;
+    } catch (e: any) {}
 
     await logger.info('dream', 'Dream created via syncDreamState (Confirmed)', { dreamId: dream.id }, userId);
 

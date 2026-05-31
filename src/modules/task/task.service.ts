@@ -1,5 +1,5 @@
-
 import prisma from '../../config/database';
+import { generateEmbedding } from '../../lib/embeddings';
 import { logger } from '../../utils/logger';
 import { taskValidator } from './task.validator';
 import { CreateTaskRequest, UpdateTaskRequest } from './task.dto';
@@ -93,6 +93,14 @@ export class TaskService {
       },
     });
 
+    try {
+        const queryEmbedding = await generateEmbedding(input.title);
+        const embeddingStr = `[${queryEmbedding.join(',')}]`;
+        await prisma.$executeRaw`UPDATE "Task" SET "embedding" = ${embeddingStr}::vector WHERE "id" = ${task.id}`;
+    } catch (e: any) {
+        logger.warn('task', 'Failed to generate embedding', { error: e.message });
+    }
+
     // Reminders are now scheduled purely at the Dream-level initialization.
 
     await eventService.publishEvent('task.created', {
@@ -122,6 +130,15 @@ export class TaskService {
     if (input.status) updateData.status = input.status;
 
     const updated = await prisma.task.update({ where: { id: taskId }, data: updateData });
+    
+    if (input.title) {
+        try {
+            const queryEmbedding = await generateEmbedding(input.title);
+            const embeddingStr = `[${queryEmbedding.join(',')}]`;
+            await prisma.$executeRaw`UPDATE "Task" SET "embedding" = ${embeddingStr}::vector WHERE "id" = ${taskId}`;
+        } catch (e) {}
+    }
+
     await logger.info('task', 'Task updated', { taskId, changes: Object.keys(input) }, userId);
     return updated;
   }

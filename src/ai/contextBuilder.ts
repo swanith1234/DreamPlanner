@@ -77,33 +77,55 @@ export async function buildUserContext(token: string, userId: string): Promise<U
         }
     } catch { /* Redis unavailable, continue */ }
 
-    // ── Parallel fetch (ONLY Identity/Prefs) ──────────────────────────────────
-    const [prefs] = await Promise.allSettled([
+    // ── Parallel fetch (Identity + Snapshot of Reality) ───────────────────────
+    const [prefs, dreams, tasks] = await Promise.allSettled([
         userApi.getPreferences(token),
+        dreamApi.listDreams(token, 'ACTIVE'),
+        taskApi.listTasks(token, undefined, 'PENDING'),
     ]);
 
-    // ── Extract prefs ─────────────────────────────────────────────────────────
+    // ── Extract data ─────────────────────────────────────────────────────────
     const prefsData = prefs.status === 'fulfilled' ? prefs.value : null;
+    const dreamsData = dreams.status === 'fulfilled' ? dreams.value : [];
+    const tasksData = tasks.status === 'fulfilled' ? tasks.value : [];
+
     const name: string = prefsData?.name || prefsData?.user?.name || 'there';
     const preferredName: string = prefsData?.preferredName || name;
     const agentName: string = prefsData?.agentName || `Future ${name}`;
     const motivationTone: string = prefsData?.motivationTone || 'NEUTRAL';
 
+    // ── Format Reality Snapshot ──────────────────────────────────────────────
+    const dreamSnapshot = Array.isArray(dreamsData) && dreamsData.length > 0 
+        ? dreamsData.slice(0, 3).map((d: any) => `• ${d.title} (ID: ${d.id.slice(0,8)})`).join('\n')
+        : 'No active dreams.';
+
+    const taskSnapshot = Array.isArray(tasksData) && tasksData.length > 0
+        ? tasksData.slice(0, 3).map((t: any) => `• ${t.title} [${t.status}]`).join('\n')
+        : 'No pending tasks.';
+
     // ── Build the ultra-lean context block ────────────────────────────────────
     const contextBlock = `
 USER_IDENTITY:
 You ARE: ${agentName}
-Address the user as: ${preferredName}
-User's Real Name: ${name}
-Motivation Tone: ${motivationTone}
-Current Date: ${new Date().toLocaleDateString('en-IN')}
+Address user as: ${preferredName}
+Tone: ${motivationTone}
+Date: ${new Date().toLocaleDateString('en-IN')}
+
+ACTIVE_DREAMS:
+${dreamSnapshot}
+
+PENDING_TASKS:
+${taskSnapshot}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
-    await logger.info('context-builder', `[CONTEXT ANNIHILATION] Built lean context for ${name}`, {});
+    await logger.info('context-builder', `[CONTEXT REBUILT] Snapshot for ${name}`, { 
+        dreams: Array.isArray(dreamsData) ? dreamsData.length : 0,
+        tasks: Array.isArray(tasksData) ? tasksData.length : 0
+    });
 
     const result: UserContext = { name, preferredName, agentName, motivationTone, contextBlock };
 
-    // ── Cache the result for 2 minutes ────────────────────────────────────────
+    // ── Cache the result for 30 seconds ───────────────────────────────────────
     try {
         await redis.set(contextCacheKey(userId), JSON.stringify(result), 'EX', CONTEXT_TTL);
     } catch { /* Redis unavailable */ }
