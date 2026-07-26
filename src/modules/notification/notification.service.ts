@@ -9,8 +9,6 @@ import { eventService } from '../event/event.service';
 import { pushService } from './push.service';
 import { generateNotificationMessageWithLLM } from './llm-provider';
 import { notificationDispatcher } from './dispatcher';
-import { taskService } from '../task/task.service';
-import { NotFoundError } from '../../utils/errors';
 
 export class NotificationService {
   /**
@@ -442,11 +440,6 @@ export class NotificationService {
           user: {
             include: { preferences: true }
           },
-          // NOTE: `task` was previously not included here, so dispatcher.ts's
-          // `data.task` was always undefined and every push notification deep-linked
-          // to `/app/home` instead of the actual task — this is what was included to
-          // fix the "notification body tap doesn't route to the right screen" bug.
-          task: true,
           dream: {
             include: {
               tasks: {
@@ -669,67 +662,6 @@ export class NotificationService {
       );
       throw error;
     }
-  }
-
-  /**
-   * Handle a progress-logging action triggered directly from a push notification
-   * (Android action button/RemoteInput reply, or Web Notification action/text reply).
-   * Resolves the task's *current* active checkpoint at click-time via
-   * `taskService.getTask`, so the client only ever needs to know the notification id —
-   * never a specific checkpoint id, which could have changed since the push was sent.
-   */
-  async applyPushAction(
-    userId: string,
-    notificationId: string,
-    input: { delta?: number; text?: string; localDate?: string }
-  ): Promise<{ status: 'updated' | 'noop' | 'needsChat'; text?: string }> {
-    const notification = await prisma.notification.findUnique({ where: { id: notificationId } });
-    if (!notification || notification.userId !== userId) {
-      throw new NotFoundError('Notification');
-    }
-    if (!notification.taskId) {
-      return { status: 'noop' };
-    }
-
-    const delta = this.resolveDelta(input.delta, input.text);
-
-    if (delta === null) {
-      // Free-text that isn't a number/"done" — forward it as a normal chat message
-      // instead of silently dropping it (mirrors what a native inline reply already
-      // does for non task-linked notifications).
-      return input.text?.trim() ? { status: 'needsChat', text: input.text.trim() } : { status: 'noop' };
-    }
-
-    const task = await taskService.getTask(notification.taskId, userId);
-    const activeCheckpoint = task.checkpoints.find((cp: any) => cp.isActive);
-    if (!activeCheckpoint) {
-      return { status: 'noop' }; // task already fully checked off — nothing to bump
-    }
-
-    await taskService.updateCheckpointProgress(
-      notification.taskId,
-      activeCheckpoint.id,
-      userId,
-      delta,
-      input.localDate
-    );
-
-    return { status: 'updated' };
-  }
-
-  /** Numeric delta from a button (already a number) or parsed from free text ("50", "50%", "done"). */
-  private resolveDelta(delta?: number, text?: string): number | null {
-    if (typeof delta === 'number' && delta > 0 && delta <= 100) return delta;
-    if (!text) return null;
-
-    const trimmed = text.trim().toLowerCase();
-    if (['done', 'finished', 'complete', 'completed'].includes(trimmed)) return 100;
-
-    const match = trimmed.match(/^(\d{1,3})\s*%?$/);
-    if (!match) return null;
-
-    const value = parseInt(match[1], 10);
-    return value > 0 && value <= 100 ? value : null;
   }
 }
 

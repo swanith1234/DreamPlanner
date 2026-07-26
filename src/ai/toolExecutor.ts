@@ -18,7 +18,6 @@ import { notificationApi } from '../apiAdapter/notificationApi';
 import { roadmapApi } from '../apiAdapter/roadmapApi';
 import { logger } from '../utils/logger';
 import type { ToolName } from './tools';
-import prisma from '../config/database';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -159,61 +158,6 @@ export async function executeTool(
                     title: args.title,
                     targetDate: args.targetDate,
                 });
-                break;
-
-            case 'updateProgressQuick':
-                await logger.info('tool-executor', `[DISPATCH] updateProgressQuick → resolving context`, { args });
-                try {
-                    const base64Payload = token.split('.')[1];
-                    const decodedToken = JSON.parse(Buffer.from(base64Payload, 'base64').toString('utf8'));
-                    const userId = decodedToken.userId;
-                    
-                    if (!userId) throw new Error('Unauthorized');
-                    
-                    const amount = parseInt(String(args.amount), 10);
-                    const isAbsolute = String(args.type).toUpperCase() === 'TO';
-                    
-                    // 1. Check for active checkpoint
-                    const activeCp = await prisma.taskCheckpoint.findFirst({
-                        where: { task: { dream: { userId } }, isCompleted: false },
-                        orderBy: { targetDate: 'asc' },
-                        include: { task: true }
-                    });
-                    
-                    if (activeCp) {
-                        const delta = isAbsolute ? (amount - activeCp.progress) : amount;
-                        if (delta === 0) {
-                            result = { error: 'Checkpoint is already at this progress level.' };
-                            break;
-                        }
-                        result = await taskApi.updateCheckpointProgress(token, activeCp.taskId, activeCp.id, delta, args.localDate || new Date().toISOString().split('T')[0]);
-                        result.systemInstruction = `✅ Progress updated! Checkpoint "${activeCp.title}" is now at ${Math.min(100, Math.max(0, activeCp.progress + delta))}%.`;
-                        break;
-                    }
-                    
-                    // 2. Check for active task
-                    const activeTask = await prisma.task.findFirst({
-                        where: { dream: { userId }, status: 'IN_PROGRESS' },
-                        orderBy: { updatedAt: 'desc' }
-                    });
-                    
-                    if (activeTask) {
-                        const currentProgress = activeTask.progressPercent || 0;
-                        const targetValue = isAbsolute ? amount : (currentProgress + amount);
-                        const finalValue = Math.min(100, Math.max(0, targetValue));
-                        if (finalValue === currentProgress) {
-                            result = { error: 'Task is already at this progress level.' };
-                            break;
-                        }
-                        result = await taskApi.updateTaskProgress(token, activeTask.id, finalValue);
-                        result.systemInstruction = `✅ Progress updated! Task "${activeTask.title}" is now at ${finalValue}%.`;
-                        break;
-                    }
-                    
-                    result = { error: 'No active tasks or checkpoints found to update.' };
-                } catch (err: any) {
-                    result = { error: err.message };
-                }
                 break;
 
             case 'updateCheckpointProgress':

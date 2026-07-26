@@ -58,58 +58,40 @@ export class PushService {
                     // Check if Native FCM Token via our mock key payload
                     if (sub.p256dh === 'NATIVE' || sub.auth === 'NATIVE' || !sub.p256dh) {
                         await logger.info('notification', `[FCM] Sending to native device`, { subId: sub.id, token: sub.endpoint.substring(0, 10) + '...' });
-
+                        
                         // FCM data values MUST all be strings
                         const stringData: Record<string, string> = {};
                         if (payload.data) {
                             for (const [key, val] of Object.entries(payload.data)) {
-                                if (val !== undefined) stringData[key] = String(val);
+                                stringData[key] = String(val);
                             }
                         }
+                        stringData.actionId = 'inline_reply';
+                        stringData.click_action = 'inline_reply';
 
-                        const isInteractive = Array.isArray(payload.actions) && payload.actions.length > 0;
-
-                        if (isInteractive) {
-                            // Data-only message: MyFcmMessagingService (Android) builds the
-                            // actionable notification itself (buttons + inline reply), so we
-                            // must NOT also send a top-level `notification` block here — that
-                            // would make the OS auto-display a second, non-interactive tray
-                            // notification alongside ours.
-                            stringData.interactive = 'task_progress';
-                            stringData.title = payload.title || 'IgniteMate';
-                            stringData.body = payload.body || '';
-                            stringData.actions = JSON.stringify(payload.actions);
-                        }
-
-                        // IMPORTANT — routing bug root cause: this used to force
-                        // `android.notification.clickAction` / `apns...category` to
-                        // 'inline_reply' on EVERY push, but no Activity in AndroidManifest.xml
-                        // declares a matching intent-filter for that action string. Android
-                        // therefore couldn't resolve the tap PendingIntent and just dismissed
-                        // the notification instead of opening the app. We no longer set any
-                        // clickAction override here — for non-interactive notifications this
-                        // lets Android fall back to its default "launch the app" tap behavior
-                        // (see AppShell.tsx's `actionId === 'tap'` handler for the deep link).
                         const fcmMessage: admin.messaging.Message = {
                             token: sub.endpoint,
-                            ...(isInteractive
-                                ? {}
-                                : {
-                                    notification: {
-                                        title: payload.title || 'IgniteMate',
-                                        body: payload.body || 'New message'
-                                    }
-                                }),
+                            notification: {
+                                title: payload.title || "IgniteMate",
+                                body: payload.body || "New message"
+                            },
                             data: stringData,
                             android: {
-                                // Data-only interactive pushes must arrive promptly even under
-                                // Doze/battery-optimization, or the action buttons render stale.
-                                priority: 'high'
+                                notification: {
+                                    clickAction: 'inline_reply'
+                                }
+                            },
+                            apns: {
+                                payload: {
+                                    aps: {
+                                        category: 'inline_reply'
+                                    }
+                                }
                             }
                         };
-
+                        
                         const response = await admin.messaging().send(fcmMessage);
-                        await logger.info('notification', `[FCM] Send success`, { response, interactive: isInteractive });
+                        await logger.info('notification', `[FCM] Send success`, { response });
                     } else {
                         // Standard Web Push
                         const notificationPayload = JSON.stringify(payload);

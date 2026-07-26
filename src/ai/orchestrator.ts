@@ -10,7 +10,6 @@ import { notificationWS } from '../modules/notification/websocket.server';
 import { pushService } from '../modules/notification/push.service';
 import prisma from '../config/database';
 import { resolveTask, resolveDream } from '../services/entityResolver';
-import { dreamService } from '../modules/dream/dream.service';
 
 import { executeWithFallback, type ChatMessage } from './llmClient';
 
@@ -18,9 +17,6 @@ export interface ChatResponse {
     text: string;
     responseMode: 'CHAT' | 'SUCCESS' | 'ERROR';
 }
-
-// Tools that skip PENDING_CONFIRM and execute immediately once all required fields are gathered
-const SKIP_CONFIRMATION_TOOLS = new Set(['updateProgressQuick']);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // naturalizeResult
@@ -70,141 +66,6 @@ Rules:
 // ─────────────────────────────────────────────────────────────────────────────
 function isValidUUID(v: string): boolean {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// validateExtractedTypes
-// Strictly compares extracted JSON types against the JSON schema types.
-// Returns an array of error strings if mismatches are found.
-// ─────────────────────────────────────────────────────────────────────────────
-function validateExtractedTypes(extracted: Record<string, any>, schema: any): string[] {
-    const errors: string[] = [];
-    const props = schema?.function?.parameters?.properties || {};
-    
-    for (const [key, value] of Object.entries(extracted)) {
-        if (value === null || value === undefined) continue;
-        
-        const propSchema = props[key];
-        if (!propSchema) continue;
-
-        const type = Array.isArray(propSchema.type) ? propSchema.type[0] : propSchema.type;
-        
-        if (type === 'integer' || type === 'number') {
-            if (typeof value !== 'number') {
-                errors.push(`Field '${key}' must be a number, but got ${typeof value} '${value}'.`);
-            }
-        } else if (type === 'boolean') {
-            if (typeof value !== 'boolean') {
-                errors.push(`Field '${key}' must be a boolean, but got ${typeof value} '${value}'.`);
-            }
-        } else if (type === 'string') {
-            if (typeof value !== 'string') {
-                errors.push(`Field '${key}' must be a string, but got ${typeof value} '${value}'.`);
-            } else if (key === 'deadline' || key === 'startDate' || key === 'targetDate') {
-                // strict date check YYYY-MM-DD
-                const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-                if (!dateRegex.test(value)) {
-                    errors.push(`Field '${key}' must be exactly YYYY-MM-DD format, but got '${value}'.`);
-                }
-            }
-        }
-    }
-    return errors;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// extractWithAutoCorrection
-// Handles extraction with type validation and up to 3 auto-correction attempts.
-// ─────────────────────────────────────────────────────────────────────────────
-async function extractWithAutoCorrection(
-    systemPromptBase: string,
-    history: any[],
-    schema: any,
-    isSlotFilling: boolean
-): Promise<any> {
-    let extractionAttempts = 0;
-    let correctionPrompt = '';
-    
-    while (extractionAttempts < 3) {
-        extractionAttempts++;
-        const systemPrompt = correctionPrompt 
-            ? `${systemPromptBase}\n\nCRITICAL FIX REQUIRED:\n${correctionPrompt}` 
-            : systemPromptBase;
-            
-        // We append history to provide context for resolving pronouns ("that one")
-        const messages: any[] = [{ role: 'system', content: systemPrompt }, ...history];
-
-        const response = await groq.chat.completions.create({
-            model: 'llama-3.1-8b-instant',
-            messages,
-            response_format: { type: 'json_object' },
-            max_tokens: 400,
-            temperature: 0,
-        });
-
-        const parsed = JSON.parse(response.choices[0]?.message?.content || '{}');
-        
-        // If slot filling and diverting, or requests more history, return immediately
-        if (isSlotFilling && (parsed.is_diverting === true || parsed.needs_more_history === true)) {
-            return parsed;
-        }
-
-        const extractedToValidate = isSlotFilling ? (parsed.extracted_fields || {}) : parsed;
-        const errors = validateExtractedTypes(extractedToValidate, schema);
-        
-        if (errors.length > 0) {
-            correctionPrompt = `Errors found:\n` + errors.map((e, i) => `${i+1}. ${e}`).join('\n') + `\nFix ALL these errors and output the full JSON again.`;
-            await logger.warn('orchestrator', `Extraction type mismatch (Attempt ${extractionAttempts})`, { errors });
-        } else {
-            return parsed; // Types are valid
-        }
-    }
-    
-    // Fallback if max attempts reached
-    await logger.error('orchestrator', 'Extraction failed after 3 attempts due to type mismatches', {});
-    return isSlotFilling ? { extracted_fields: {}, is_diverting: false } : {};
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// deriveMissingSlots
-// Autonomously executes read-only tools to fetch database context for missing
-// entities (e.g., listDreams if dreamId is missing) to allow zero-touch derivation.
-// ─────────────────────────────────────────────────────────────────────────────
-async function deriveMissingSlots(missingFields: string[], token: string): Promise<string> {
-    const derivationPromises: Promise<any>[] = [];
-    const contextMap: Record<string, string> = {};
-
-    if (missingFields.includes('dreamId') || missingFields.includes('_dreamTitle')) {
-        await logger.info('orchestrator', '[DERIVATION] Enqueueing listDreams to resolve missing dreamId', {});
-        derivationPromises.push(
-            executeTool('listDreams', { status: 'ACTIVE' }, token).then(res => {
-                contextMap['Dreams List'] = Array.isArray(res) 
-                    ? res.map(d => `ID: ${d.id} | Title: ${d.title}`).join('\n') 
-                    : 'No active dreams found.';
-            }).catch(e => { contextMap['Dreams List'] = 'Failed to fetch'; })
-        );
-    }
-    
-    if (missingFields.includes('taskId') || missingFields.includes('_taskTitle')) {
-        await logger.info('orchestrator', '[DERIVATION] Enqueueing listTasks to resolve missing taskId', {});
-        derivationPromises.push(
-            executeTool('listTasks', { status: 'PENDING' }, token).then(res => {
-                contextMap['Pending Tasks List'] = Array.isArray(res) 
-                    ? res.map(t => `ID: ${t.id} | Title: ${t.title}`).join('\n') 
-                    : 'No pending tasks found.';
-            }).catch(e => { contextMap['Pending Tasks List'] = 'Failed to fetch'; })
-        );
-    }
-
-    if (derivationPromises.length === 0) return '';
-
-    await Promise.all(derivationPromises);
-    
-    let derivationContext = `\n--- DERIVED DATABASE CONTEXT ---\nThe following data was fetched from the database to help you resolve the missing fields. Use the IDs below if they match the user's intent:\n`;
-    for (const [key, val] of Object.entries(contextMap)) {
-        derivationContext += `\n[${key}]\n${val}\n`;
-    }
-    return derivationContext;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -377,43 +238,6 @@ async function buildConfirmSummary(args: Record<string, any>): Promise<string> {
 }
 
 
-// ─────────────────────────────────────────────────────────────────────────────
-// quickClassify
-// Regex-based YES / NO classifier — zero LLM cost.
-// Only falls through to LLM when the message is ambiguous (potential correction).
-// NO regex: loosened to catch trailing pronouns/objects per production review.
-// ─────────────────────────────────────────────────────────────────────────────
-function quickClassify(msg: string): 'YES' | 'NO' | 'UNKNOWN' {
-    const m = msg.trim().toLowerCase();
-    const YES_RE = /^(yes|yeah|yep|yup|sure|ok|okay|do it|go ahead|confirm|correct|looks good|proceed|create it|make it|approved|perfect|sounds good)[\s!.]*$/i;
-    const NO_RE  = /^(no|nope|cancel( that| it| this)?|abort|stop( it| that| this)?|never mind|nevermind|don'?t( do it| do that| create)?)[\s!.]*$/i;
-    if (YES_RE.test(m)) return 'YES';
-    if (NO_RE.test(m))  return 'NO';
-    return 'UNKNOWN';
-}
-
-function getDynamicRequiredFields(toolName: string, schemaRequired: string[], currentArgs: Record<string, any>): string[] {
-    let required = [...schemaRequired];
-    if (toolName === 'createTask' && currentArgs.deadline) {
-        const deadline = new Date(currentArgs.deadline);
-        if (!isNaN(deadline.getTime())) {
-            const now = new Date();
-            const start = currentArgs.startDate ? new Date(currentArgs.startDate) : now;
-            // Normalize to midnight to calculate pure calendar days
-            deadline.setHours(0, 0, 0, 0);
-            start.setHours(0, 0, 0, 0);
-            const diffTime = deadline.getTime() - start.getTime();
-            const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-            
-            // If task duration is 1 day or less, checkpoints are NOT required
-            if (diffDays <= 1) {
-                required = required.filter(f => f !== 'checkpoints');
-            }
-        }
-    }
-    return required;
-}
-
 async function detectIntent(message: string, history: any[]): Promise<{ intent: 'ACTION' | 'CHAT', complexity: 'SIMPLE' | 'COMPLEX', standalone_command?: string, usage?: any, ms?: number }> {
     const context = history.slice(-3).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
     const start = Date.now();
@@ -424,13 +248,9 @@ async function detectIntent(message: string, history: any[]): Promise<{ intent: 
                 {
                     role: 'system',
                     content: `Analyze user request. Return JSON: {"intent": "ACTION"|"CHAT", "complexity": "SIMPLE"|"COMPLEX", "standalone_command": "..."}.
-
-RULES:
-1. ACTION: The user wants to do something with the system (create, update, delete, list, search, fetch, show, get). Examples: "list my dreams", "what are my tasks?", "create a dream", "cancel".
-2. CHAT: The user is making casual conversation (greetings, jokes, general knowledge). Examples: "hello", "who are you?", "tell me a joke".
-
-If intent is ACTION, "standalone_command" MUST be a fully resolved, standalone sentence explaining the exact action, replacing pronouns with their specific nouns from the history.
-Example: If history is about 'AgroNexus Task' and user says 'Push it to Friday', standalone_command MUST be 'Push the AgroNexus task to Friday.'
+If conversation: { "intent": "CHAT" }
+If an action is requested: { "intent": "ACTION", "standalone_command": "A fully resolved, standalone sentence explaining the exact action, replacing pronouns with their specific nouns from the history." }
+Example: If history is about 'AgroNexus Task' and user says 'Push it to Friday', the standalone_command MUST be 'Push the AgroNexus task to Friday.'
 
 CONTEXT:
 ${context}
@@ -469,34 +289,8 @@ export const orchestrator = {
 
         // --- PHASE 4: STATE INTERCEPTOR ---
         const session = await prisma.actionSession.findUnique({ where: { userId } });
-
-        // ── Double-tap guard: if session is currently being processed, queue the message ──
-        // isProcessing is set to true while executeTool is running. A second message
-        // arriving mid-execution would otherwise corrupt collectedFields.
-        if (session && (session as any).isProcessing) {
-            await logger.warn('orchestrator', '[LOCK] Session is processing — rejecting concurrent message', { userId });
-            const text = "I'm still working on your last request. Give me just a moment! ⏳";
-            await chatService.saveMessage(userId, 'assistant', text);
-            return { text, responseMode: 'CHAT' };
-        }
         if (session) {
             await logger.info('orchestrator', 'State Interceptor HIT', { status: session.status, targetTool: session.targetTool });
-
-            // ── CANCELLATION INTERCEPT (before any LLM/service processing) ──────────────────────
-            const CANCEL_RE = /\b(cancel|stop|abort|quit|exit|no|nope|never mind|nevermind|yes cancel|cancel it|cancel this|cancel that|cancel action|forget it|drop it|leave it|don'?t)\b/i;
-            const quickResult = quickClassify(message);
-            const looksLikeCancel = quickResult === 'NO' || CANCEL_RE.test(message.trim());
-
-            if (looksLikeCancel) {
-                await logger.info('orchestrator', 'User cancelled via intercept — deleting session', { tool: session.targetTool, message });
-                await prisma.actionSession.delete({ where: { userId } });
-                if (session.targetTool === 'syncDreamState') {
-                    await dreamService.clearDraft(userId);
-                }
-                const cancelText = `No problem — **${session.targetTool}** cancelled. What would you like to do?`;
-                await chatService.saveMessage(userId, 'assistant', cancelText);
-                return { text: cancelText, responseMode: 'CHAT' };
-            }
 
             // ── SERVICE-DRIVEN TOOLS: call the service immediately, let IT manage state ──
             // syncDreamState has a full Redis-backed slot-filling engine inside the service.
@@ -510,67 +304,26 @@ export const orchestrator = {
                 // Groq: translate user message → args (translator only, no validation)
                 const toolRecord = await prisma.toolRegistry.findUnique({ where: { name: session.targetTool } });
                 const schema = toolRecord?.rawJsonSchema as any;
-                const history = await chatService.getConversationWindow(userId, 5);
                 const extRes = await groq.chat.completions.create({
                     model: 'llama-3.1-8b-instant',
-                    messages: [
-                        {
-                            role: 'system',
-                            content: `You are a translation assistant. Your job is to extract JSON arguments for the tool "${session.targetTool}" from the user's latest message, using the chat history for context.
-Parameter Schema: ${JSON.stringify(schema?.function?.parameters ?? {})}
-
-You MUST return a JSON object with this shape:
-{
-  "extracted_fields": {},
-  "is_diverting": false
-}
-
-CRITICAL RULES:
-1. Analyze the chat history to understand which specific question/slot the user is answering with their latest message.
-2. ONLY extract values that are explicitly provided or answered by the user in the latest message and put them in "extracted_fields". Do NOT invent or assume any values.
-3. NEVER map answers to the wrong parameter (e.g. if the user is asked about their skill level, map "intermediate" to "currentSkillLevel", NOT to "title").
-4. If the user said "yes", "confirm", "ok", or similar confirmation, set "confirmed" to true inside "extracted_fields".
-5. For dates (deadline, startDate, targetDate), you MUST convert natural language or abbreviations into exact YYYY-MM-DD format. Assume today is ${new Date().toISOString().split('T')[0]}.
-6. If the user ignores the slot-filling questions and starts a completely different topic (e.g. asking to create a task when they are currently in the middle of creating a dream), set "is_diverting" to true and leave "extracted_fields" as {}.`
-                        },
-                        ...history.map((h: any) => ({
-                            role: h.role,
-                            content: h.content
-                        }))
-                    ],
+                    messages: [{ role: 'system', content: `Translate the user's message into JSON args for the tool "${session.targetTool}". Schema: ${JSON.stringify(schema?.function?.parameters ?? {})}. User message: "${message}". Extract only values explicitly present. Do NOT invent anything. If the user said "yes/confirm/ok", set confirmed=true.` }],
                     response_format: { type: 'json_object' },
-                    max_tokens: 250,
+                    max_tokens: 200,
                     temperature: 0,
                 });
-                const parsed = JSON.parse(extRes.choices[0]?.message?.content || '{}');
-                const isDiverting = parsed.is_diverting === true;
-                const extractedArgs = parsed.extracted_fields || {};
-                await logger.info('orchestrator', `[SERVICE-DRIVEN] Groq extracted args`, { extractedArgs, isDiverting });
-
-                if (isDiverting) {
-                    await logger.info('orchestrator', 'Topic Diversion detected during service-driven tool — holding session', { tool: session.targetTool });
-                    const text = `We're currently in the middle of **${session.targetTool}**. Would you like to cancel this and talk about your new topic, or finish this action first?`;
-                    await chatService.saveMessage(userId, 'assistant', text);
-                    return { text, responseMode: 'CHAT' };
-                }
+                const extractedArgs = JSON.parse(extRes.choices[0]?.message?.content || '{}');
+                await logger.info('orchestrator', `[SERVICE-DRIVEN] Groq extracted args`, { extractedArgs });
 
                 // Call the actual service/controller via the API adapter
                 const result = await executeTool(session.targetTool, extractedArgs, token);
                 await logger.info('orchestrator', `[SERVICE-DRIVEN] Service responded`, { status: result?.status });
+
                 if (result?.status === 'COMPLETE') {
                     // Dream created ✅ — clean up session and celebrate
                     await prisma.actionSession.delete({ where: { userId } });
                     await invalidateContextCache(userId);
-                    let text = `✅ Your dream has been created!`;
-                    if (result.systemInstruction) {
-                        const polishRes = await groq.chat.completions.create({
-                            model: 'llama-3.1-8b-instant',
-                            messages: [{ role: 'system', content: `You are a friendly AI assistant helping create a dream. The system says: "${result.systemInstruction}". Translate this instruction into a warm, conversational message to the user. Do not expose developer notes or system directives.` }],
-                            max_tokens: 120,
-                            temperature: 0.7,
-                        });
-                        text = polishRes.choices[0]?.message?.content?.trim() ?? text;
-                    }
+                    const text = result.systemInstruction
+                        ?? `✅ Your dream has been created! Dream ID: ${result.dreamId}`;
                     await chatService.saveMessage(userId, 'assistant', text);
                     return { text, responseMode: 'SUCCESS' };
 
@@ -599,58 +352,70 @@ CRITICAL RULES:
                     const text = polishRes.choices[0]?.message?.content?.trim() ?? instruction;
                     await chatService.saveMessage(userId, 'assistant', text);
                     return { text, responseMode: 'CHAT' };
+
+                } else if (result?.status === 'INVALID') {
+                    // Service validation failed — surface reason to user
+                    const text = result.systemInstruction ?? result.reason ?? 'The dream details seem incomplete or invalid.';
+                    await chatService.saveMessage(userId, 'assistant', text);
+                    return { text, responseMode: 'CHAT' };
+
+                } else if (result?.error) {
+                    // API/network error
+                    await prisma.actionSession.delete({ where: { userId } });
+                    const text = `Something went wrong: ${result.error}`;
+                    await chatService.saveMessage(userId, 'assistant', text);
+                    return { text, responseMode: 'CHAT' };
                 }
 
+                // Fallthrough: unknown service response — keep session alive
+                const text = 'Could you please continue providing the details?';
+                await chatService.saveMessage(userId, 'assistant', text);
+                return { text, responseMode: 'CHAT' };
             }
 
             if (session.status === 'SLOT_FILLING') {
-
                 // ── Fetch schema FIRST so we can tell the LLM which fields are missing ──
                 const toolRecord = await prisma.toolRegistry.findUnique({ where: { name: session.targetTool } });
                 const schema = toolRecord?.rawJsonSchema as any;
-                const baseRequiredFields: string[] = schema?.function?.parameters?.required || [];
+                const requiredFields: string[] = schema?.function?.parameters?.required || [];
                 const oldFields = (session.collectedFields as Record<string, any>) ?? {};
-                const requiredFieldsBefore = getDynamicRequiredFields(session.targetTool, baseRequiredFields, oldFields);
-                const missingBefore = requiredFieldsBefore.filter(f => !oldFields[f]);
+                const missingBefore = requiredFields.filter(f => !oldFields[f]);
 
                 // ── STEP 4: Field Extraction — JSON-mode with Diversion Detection ─────
                 const extStart = Date.now();
-                const systemPromptBase = `You are a slot-filling assistant for the action "${session.targetTool}".
+                const extractionResponse = await groq.chat.completions.create({
+                    model: 'llama-3.1-8b-instant',
+                    messages: [{
+                        role: 'system',
+                        content: `You are a slot-filling assistant for the action "${session.targetTool}".
 The user is being asked to provide these missing fields: ${missingBefore.join(', ')}.
 Full parameter schema: ${JSON.stringify(schema?.function?.parameters ?? {})}.
 
 Analyze the user's message and return a JSON object with EXACTLY this shape:
 {
   "extracted_fields": {},
-  "is_diverting": false,
-  "needs_more_history": false
+  "is_diverting": false
 }
 
 Rules:
 - If the user's message directly answers one of the missing fields, set "is_diverting" to false and populate "extracted_fields" with any values you can extract.
 - If the user ignores the missing fields, asks a completely unrelated question, or tries to change the subject entirely, set "is_diverting" to true and leave "extracted_fields" as {}.
-- If you cannot resolve a pronoun (like "that one") from the provided chat history, set "needs_more_history" to true.
-- CRITICAL: If a field is NOT explicitly provided by the user, DO NOT include it in the JSON. Omit the key entirely. Do not invent values or use the property name or generic terms (e.g. "dreamId", "taskId", "task", "dream", "my dream") as a value.
-- CRITICAL: Do NOT extract command phrases, action verbs, or intent declarations (e.g. "create a task", "add new task", "create task", "make task") as the "title" or "description" of the task/dream. The "title" must only be extracted if the user explicitly specified what the task/dream is actually called (e.g. "Create task called Buy Groceries" -> title is "Buy Groceries").
-- CRITICAL: Ensure every extracted field strictly matches the exact data type defined in the Schema (e.g., integers must be numbers, not strings).
-- IMPORTANT: For dates (deadline, startDate, targetDate), you MUST convert natural language or abbreviations (e.g., "tomorrow", "nxt week", "next fri") into exact YYYY-MM-DD format. Assume today is ${new Date().toISOString().split('T')[0]}. Do NOT output words for date fields.
+- Only include fields that are explicitly present in the user's message. Do NOT invent or assume values.
+- Understand natural language (e.g. "next sunday", "end of the month", "the AgroNexus project").
 
-User message: "${message}"`;
-
-                // Fetch 5 history messages for context by default
-                let history = await chatService.getConversationWindow(userId, 5);
-                let parsed = await extractWithAutoCorrection(systemPromptBase, history as any[], schema, true);
-                
-                // If LLM says it needs more history, fetch 15 messages and try again
-                if (parsed.needs_more_history) {
-                    await logger.info('orchestrator', '[SLOT_FILLING] LLM requested more history context. Re-fetching up to 15 messages.', {});
-                    history = await chatService.getConversationWindow(userId, 15);
-                    parsed = await extractWithAutoCorrection(systemPromptBase, history as any[], schema, true);
-                }
-
+User message: "${message}"`
+                    }],
+                    response_format: { type: 'json_object' },
+                    max_tokens: 300,
+                    temperature: 0,
+                });
                 const extMs = Date.now() - extStart;
-                await logger.info('orchestrator', 'Slot Extraction Pass (SLOT_FILLING)', { ms: extMs });
+                await logger.info('orchestrator', 'Slot Extraction Pass (SLOT_FILLING)', {
+                    ms: extMs,
+                    tokens: extractionResponse.usage?.total_tokens
+                });
 
+                const parsed = JSON.parse(extractionResponse.choices[0]?.message?.content || '{}');
                 const isDiverting: boolean = parsed.is_diverting === true;
                 const newFields: Record<string, any> = parsed.extracted_fields ?? {};
 
@@ -672,36 +437,11 @@ User message: "${message}"`;
                 }
 
                 // Resolve any entity IDs (dreamId, taskId) semantically
-                let resolvedFields = await resolveEntityArgs(userId, mergedFields);
-                let requiredFieldsAfter = getDynamicRequiredFields(session.targetTool, baseRequiredFields, resolvedFields);
-                let missingFields = requiredFieldsAfter.filter(f => !resolvedFields[f]);
-
-                // ── STEP 5.5: Autonomous Context Derivation ───────────────────────
-                if (missingFields.length > 0) {
-                    const derivationContext = await deriveMissingSlots(missingFields, token);
-                    if (derivationContext) {
-                        await logger.info('orchestrator', '[SLOT_FILLING] Re-running extraction with derived context', {});
-                        const newSystemPrompt = systemPromptBase + derivationContext;
-                        
-                        // Re-extract using the new context
-                        parsed = await extractWithAutoCorrection(newSystemPrompt, history as any[], schema, true);
-                        
-                        const reExtractedFields = parsed.extracted_fields ?? {};
-                        for (const [k, v] of Object.entries(reExtractedFields)) {
-                            if (v !== null && v !== undefined && v !== '') {
-                                mergedFields[k] = v;
-                            }
-                        }
-                        
-                        // Re-resolve
-                        resolvedFields = await resolveEntityArgs(userId, mergedFields);
-                        requiredFieldsAfter = getDynamicRequiredFields(session.targetTool, baseRequiredFields, resolvedFields);
-                        missingFields = requiredFieldsAfter.filter(f => !resolvedFields[f]);
-                    }
-                }
+                const resolvedFields = await resolveEntityArgs(userId, mergedFields);
+                const missingFields = requiredFields.filter(f => !resolvedFields[f]);
 
                 if (missingFields.length > 0) {
-                    await logger.info('orchestrator', 'Missing fields remain after merge, resolution & derivation', { missingFields, resolvedFields });
+                    await logger.info('orchestrator', 'Missing fields remain after merge & resolution', { missingFields, resolvedFields });
                     await prisma.actionSession.update({ where: { userId }, data: { collectedFields: resolvedFields } });
 
                     // ── STEP 6: Conversational Polish ─────────────────────────────────
@@ -741,14 +481,6 @@ Be warm and human. Output only the question — no preamble, no explanation.`
                         ?? `Could you also share the ${nextMissing}?`;
                     await chatService.saveMessage(userId, 'assistant', text);
                     return { text, responseMode: 'CHAT' };
-                } else if (SKIP_CONFIRMATION_TOOLS.has(session.targetTool)) {
-                    await logger.info('orchestrator', 'Tool skips confirmation — executing immediately', { tool: session.targetTool });
-                    const result = await executeTool(session.targetTool, resolvedFields, token);
-                    await prisma.actionSession.delete({ where: { userId } });
-                    await invalidateContextCache(userId);
-                    const text = await naturalizeResult(session.targetTool, result, message);
-                    await chatService.saveMessage(userId, 'assistant', text);
-                    return { text, responseMode: 'SUCCESS' };
                 } else {
                     await logger.info('orchestrator', 'All fields collected, moving to PENDING_CONFIRM', { resolvedFields });
                     await prisma.actionSession.update({ where: { userId }, data: { collectedFields: resolvedFields, status: 'PENDING_CONFIRM' } });
@@ -758,119 +490,76 @@ Be warm and human. Output only the question — no preamble, no explanation.`
                     return { text, responseMode: 'CHAT' };
                 }
             } else if (session.status === 'PENDING_CONFIRM') {
-                // ── Step 1: Regex quick-classify — zero LLM cost for YES/NO ──────────
-                const quick = quickClassify(message);
-                await logger.info('orchestrator', `[PENDING_CONFIRM] quickClassify="${quick}" for tool="${session.targetTool}"`, {});
+                // ── 3-way classifier: YES / NO / CORRECTION ───────────────────────
+                const classifyRes = await groq.chat.completions.create({
+                    model: 'llama-3.1-8b-instant',
+                    messages: [{
+                        role: 'system',
+                        content: `You are classifying a user reply during a confirmation step for the action "${session.targetTool}".
+The collected data so far: ${JSON.stringify(session.collectedFields)}.
+The user just replied: "${message}"
 
-                if (quick === 'YES') {
-                    // Lock the session while executing to prevent double-tap
-                    await prisma.actionSession.update({ where: { userId }, data: { isProcessing: true } as any });
+Return a JSON object with EXACTLY this shape:
+{ "intent": "YES" | "NO" | "CORRECTION", "corrected_fields": {} }
+
+Rules:
+- "YES": user confirms, wants to proceed (e.g. yes, yeah, yep, sure, do it, go ahead, ok, confirm, looks good).
+- "NO": user cancels or declines (e.g. no, nope, cancel, abort, stop, never mind).
+- "CORRECTION": user is fixing a specific field (e.g. "actually make it Friday", "deadline should be 2026-05-13", "sry I meant beginner"). Extract the corrected field(s) into corrected_fields.
+Output only valid JSON.`
+                    }],
+                    response_format: { type: 'json_object' },
+                    max_tokens: 150,
+                    temperature: 0,
+                });
+
+                const classified = JSON.parse(classifyRes.choices[0]?.message?.content || '{}');
+                const pcIntent = classified.intent as 'YES' | 'NO' | 'CORRECTION';
+                await logger.info('orchestrator', `PENDING_CONFIRM classified: ${pcIntent}`, { tool: session.targetTool });
+
+                if (pcIntent === 'YES') {
                     const execStart = Date.now();
                     const resolvedFields = await resolveEntityArgs(userId, session.collectedFields as Record<string, any>);
                     const result = await executeTool(session.targetTool, resolvedFields, token);
-                    await logger.info('orchestrator', '[PENDING_CONFIRM] Tool executed', { ms: Date.now() - execStart, tool: session.targetTool });
+                    await logger.info('orchestrator', 'Tool Execution Success', { ms: Date.now() - execStart, tool: session.targetTool });
                     await prisma.actionSession.delete({ where: { userId } });
                     await invalidateContextCache(userId);
                     const text = await naturalizeResult(session.targetTool, result, message);
                     await chatService.saveMessage(userId, 'assistant', text);
                     return { text, responseMode: 'SUCCESS' };
 
-                } else if (quick === 'NO') {
-                    await logger.info('orchestrator', '[PENDING_CONFIRM] Aborted by user (regex NO)', { tool: session.targetTool });
-                    await prisma.actionSession.delete({ where: { userId } });
-                    const text = `No problem — action cancelled. Let me know if there's anything else I can help you with.`;
+                } else if (pcIntent === 'CORRECTION') {
+                    // Merge correction back into collectedFields, resolve entities, re-confirm
+                    const corrected: Record<string, any> = classified.corrected_fields ?? {};
+                    const oldFields = (session.collectedFields as Record<string, any>) ?? {};
+                    let mergedFields: Record<string, any> = { ...oldFields };
+                    for (const [k, v] of Object.entries(corrected)) {
+                        if (v !== null && v !== undefined && v !== '') mergedFields[k] = v;
+                    }
+                    // Resolve any title-style dreamId / taskId to actual UUIDs
+                    mergedFields = await resolveEntityArgs(userId, mergedFields);
+                    await logger.info('orchestrator', 'PENDING_CONFIRM correction received, merging & re-confirming', { corrected, mergedFields });
+                    await prisma.actionSession.update({
+                        where: { userId },
+                        data: { collectedFields: mergedFields, status: 'PENDING_CONFIRM' },
+                    });
+                    // Show a readable summary — no JSON, no IDs
+                    const HIDE_FIELDS = new Set(['dreamId', 'taskId', 'roadmapId', 'checkpointId']);
+                    const readableSummary = Object.entries(mergedFields)
+                        .filter(([k]) => !HIDE_FIELDS.has(k))
+                        .map(([k, v]) => `• **${k}**: ${v}`)
+                        .join('\n');
+                    const text = `Got it — here's the updated summary:\n${readableSummary}\n\nShall I go ahead now? (Yes / No)`;
                     await chatService.saveMessage(userId, 'assistant', text);
                     return { text, responseMode: 'CHAT' };
 
                 } else {
-                    // UNKNOWN — could be a CORRECTION. Call LLM only for this case.
-                    await logger.info('orchestrator', '[PENDING_CONFIRM] UNKNOWN — calling LLM to classify (may be CORRECTION)', {});
-                    const toolRecord = await prisma.toolRegistry.findUnique({ where: { name: session.targetTool } });
-                    const schema = toolRecord?.rawJsonSchema as any;
-                    const systemPromptBase = `Classify the user reply during confirmation for action "${session.targetTool}".
-Collected: ${JSON.stringify(session.collectedFields)}.
-Schema: ${JSON.stringify(schema?.function?.parameters ?? {})}.
-User said: "${message}"
-Return JSON: { "intent": "YES"|"NO"|"CORRECTION", "corrected_fields": {} }
-- YES: confirms to proceed.
-- NO: cancels.
-- CORRECTION: user is fixing a specific field. Extract corrected_fields.
-CRITICAL: corrected_fields MUST strictly match the exact data type defined in the Schema. For dates, you MUST convert natural language into exact YYYY-MM-DD format based on today (${new Date().toISOString().split('T')[0]}). Do NOT output words for dates.
-Output only valid JSON.`;
-
-                    let classificationAttempts = 0;
-                    let correctionPrompt = '';
-                    let classified: any = {};
-                    let pcIntent: 'YES' | 'NO' | 'CORRECTION' = 'NO';
-                    
-                    while (classificationAttempts < 3) {
-                        classificationAttempts++;
-                        const systemPrompt = correctionPrompt ? `${systemPromptBase}\n\nCRITICAL FIX REQUIRED:\n${correctionPrompt}` : systemPromptBase;
-                        
-                        const classifyRes = await groq.chat.completions.create({
-                            model: 'llama-3.1-8b-instant',
-                            messages: [{ role: 'system', content: systemPrompt }],
-                            response_format: { type: 'json_object' },
-                            max_tokens: 150,
-                            temperature: 0,
-                        });
-                        classified = JSON.parse(classifyRes.choices[0]?.message?.content || '{}');
-                        pcIntent = classified.intent as 'YES' | 'NO' | 'CORRECTION';
-                        
-                        if (pcIntent === 'CORRECTION' && classified.corrected_fields) {
-                            const errors = validateExtractedTypes(classified.corrected_fields, schema);
-                            if (errors.length > 0) {
-                                correctionPrompt = `Errors found in corrected_fields:\n` + errors.map((e, i) => `${i+1}. ${e}`).join('\n') + `\nFix ALL these errors and output the full JSON again.`;
-                                await logger.warn('orchestrator', `PENDING_CONFIRM type mismatch (Attempt ${classificationAttempts})`, { errors });
-                                continue;
-                            }
-                        }
-                        
-                        await logger.info('orchestrator', `[PENDING_CONFIRM] LLM classified: ${pcIntent}`, { tool: session.targetTool, tokens: classifyRes.usage?.total_tokens });
-                        break; // valid
-                    }
-
-                    if (pcIntent === 'YES') {
-                        await prisma.actionSession.update({ where: { userId }, data: { isProcessing: true } as any });
-                        const execStart = Date.now();
-                        const resolvedFields = await resolveEntityArgs(userId, session.collectedFields as Record<string, any>);
-                        const result = await executeTool(session.targetTool, resolvedFields, token);
-                        await logger.info('orchestrator', '[PENDING_CONFIRM] Tool executed (LLM YES)', { ms: Date.now() - execStart });
-                        await prisma.actionSession.delete({ where: { userId } });
-                        await invalidateContextCache(userId);
-                        const text = await naturalizeResult(session.targetTool, result, message);
-                        await chatService.saveMessage(userId, 'assistant', text);
-                        return { text, responseMode: 'SUCCESS' };
-
-                    } else if (pcIntent === 'CORRECTION') {
-                        const corrected: Record<string, any> = classified.corrected_fields ?? {};
-                        const oldFields = (session.collectedFields as Record<string, any>) ?? {};
-                        let mergedFields: Record<string, any> = { ...oldFields };
-                        for (const [k, v] of Object.entries(corrected)) {
-                            if (v !== null && v !== undefined && v !== '') mergedFields[k] = v;
-                        }
-                        mergedFields = await resolveEntityArgs(userId, mergedFields);
-                        await logger.info('orchestrator', '[PENDING_CONFIRM] Correction merged', { corrected, mergedFields });
-                        await prisma.actionSession.update({
-                            where: { userId },
-                            data: { collectedFields: mergedFields, status: 'PENDING_CONFIRM' },
-                        });
-                        const HIDE_FIELDS = new Set(['dreamId', 'taskId', 'roadmapId', 'checkpointId']);
-                        const readableSummary = Object.entries(mergedFields)
-                            .filter(([k]) => !HIDE_FIELDS.has(k))
-                            .map(([k, v]) => `• **${k}**: ${v}`)
-                            .join('\n');
-                        const text = `Got it — here's the updated summary:\n${readableSummary}\n\nShall I go ahead now? (Yes / No)`;
-                        await chatService.saveMessage(userId, 'assistant', text);
-                        return { text, responseMode: 'CHAT' };
-
-                    } else {
-                        await logger.info('orchestrator', '[PENDING_CONFIRM] Aborted by user (LLM NO)', { tool: session.targetTool });
-                        await prisma.actionSession.delete({ where: { userId } });
-                        const text = `No problem — action cancelled. Let me know if there's anything else I can help you with.`;
-                        await chatService.saveMessage(userId, 'assistant', text);
-                        return { text, responseMode: 'CHAT' };
-                    }
+                    // NO or unrecognised → abort
+                    await logger.info('orchestrator', 'Tool Execution Aborted by user', { tool: session.targetTool });
+                    await prisma.actionSession.delete({ where: { userId } });
+                    const text = `No problem — action cancelled. Let me know if there's anything else I can help you with.`;
+                    await chatService.saveMessage(userId, 'assistant', text);
+                    return { text, responseMode: 'CHAT' };
                 }
             }
         }
@@ -917,57 +606,34 @@ Output only valid JSON.`;
                 const toolSchema = routerResult.tool;
                 
                 const extStart = Date.now();
-                const systemPromptBase = `Extract JSON arguments for tool ${toolSchema.function.name}. Schema: ${JSON.stringify(toolSchema.function.parameters)}. User message: ${queryMessage}. Return a JSON object with extracted fields ONLY.
-
-CRITICAL RULES:
-1. If a field is NOT explicitly mentioned in the user message, DO NOT include it in the JSON output. Omit it entirely!
-2. Do NOT invent values, and do NOT use property names or placeholder text (e.g. "dreamId", "taskId", "task", "dream", "my dream") as values for ID/UUID fields. If a real UUID or entity name/reference is not provided, omit that ID field entirely.
-3. Do NOT extract command phrases, action verbs, or intent declarations (e.g. "create a task", "add new task", "create task", "make task") as the "title" or "description" of the task/dream. The "title" must only be extracted if the user explicitly specified what the task/dream is actually called (e.g. "Create task called Buy Groceries" -> title is "Buy Groceries").
-4. Every extracted field MUST strictly match the exact data type defined in the Schema (e.g., integers must be numbers).
-5. For dates (deadline, startDate, targetDate), you MUST convert natural language or abbreviations into exact YYYY-MM-DD format based on today (${new Date().toISOString().split('T')[0]}). Do NOT output words for date fields.`;
-
-                const extractedArgs = await extractWithAutoCorrection(systemPromptBase, history as any[], toolSchema, false);
-
+                const extractionResponse = await groq.chat.completions.create({
+                    model: 'llama-3.1-8b-instant',
+                    messages: [{ role: 'system', content: `Extract JSON arguments for tool ${toolSchema.function.name}. Schema: ${JSON.stringify(toolSchema.function.parameters)}. User message: ${queryMessage}. Return a JSON object with extracted fields only. Do NOT invent UUIDs or values not present in the message.`}],
+                    response_format: { type: 'json_object' },
+                    max_tokens: 300,
+                    temperature: 0,
+                });
                 const extMs = Date.now() - extStart;
-                await logger.info('orchestrator', 'Slot Extraction Pass (SUCCESS)', { ms: extMs });
-                await logger.info('orchestrator', '[SLOT EXTRACT] Raw LLM args', { extractedArgs });
-                let resolvedArgs = await resolveEntityArgs(userId, extractedArgs);
-                await logger.info('orchestrator', '[SLOT EXTRACT] After entity resolution', { resolvedArgs });
+                await logger.info('orchestrator', 'Slot Extraction Pass (SUCCESS)', {
+                    ms: extMs,
+                    tokens: extractionResponse.usage?.total_tokens
+                });
 
-                const baseRequiredFields: string[] = toolSchema.function.parameters?.required || [];
-                let requiredFieldsAfter = getDynamicRequiredFields(toolSchema.function.name, baseRequiredFields, resolvedArgs);
-                let missingFields = requiredFieldsAfter.filter(f => !resolvedArgs[f]);
+                const extractedArgs = JSON.parse(extractionResponse.choices[0]?.message?.content || '{}');
+                const resolvedArgs = await resolveEntityArgs(userId, extractedArgs);
 
-                // ── Autonomous Context Derivation ───────────────────────
-                if (missingFields.length > 0) {
-                    const derivationContext = await deriveMissingSlots(missingFields, token);
-                    if (derivationContext) {
-                        await logger.info('orchestrator', '[GATEKEEPER] Re-running extraction with derived context', {});
-                        const newSystemPrompt = systemPromptBase + derivationContext;
-                        
-                        // Re-extract using the new context
-                        const reExtractedArgs = await extractWithAutoCorrection(newSystemPrompt, history as any[], toolSchema, false);
-                        
-                        // Re-resolve
-                        resolvedArgs = await resolveEntityArgs(userId, reExtractedArgs);
-                        requiredFieldsAfter = getDynamicRequiredFields(toolSchema.function.name, baseRequiredFields, resolvedArgs);
-                        missingFields = requiredFieldsAfter.filter(f => !resolvedArgs[f]);
-                    }
-                }
+                const requiredFields: string[] = toolSchema.function.parameters?.required || [];
+                const missingFields = requiredFields.filter(f => !extractedArgs[f]);
 
                 // ── SERVICE-DRIVEN TOOLS: route to the service immediately ────────
                 // These tools manage their own state (Redis etc.) — just call them.
-                // For syncDreamState: ActionSession only tracks status+targetTool.
-                // The Redis dream:draft:{userId} inside dreamService is the single source of truth for collectedFields.
                 const SERVICE_DRIVEN_TOOLS_INIT = new Set(['syncDreamState']);
 
                 if (SERVICE_DRIVEN_TOOLS_INIT.has(toolSchema.function.name)) {
                     await logger.info('orchestrator', `[SERVICE-DRIVEN INIT] Creating session and calling ${toolSchema.function.name} directly`, {});
-                    // ✅ collectedFields intentionally empty for service-driven tools — Redis is source of truth
-                    await prisma.actionSession.upsert({
-                        where: { userId },
-                        update: { targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: {} },
-                        create: { userId, targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: {} }
+                    // Create a SLOT_FILLING session to intercept future turns
+                    await prisma.actionSession.create({
+                        data: { userId, targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: extractedArgs }
                     });
                     // Call the service immediately with whatever was extracted
                     const result = await executeTool(toolSchema.function.name, resolvedArgs, token);
@@ -1014,12 +680,9 @@ CRITICAL RULES:
 
                 if (missingFields.length > 0) {
                     // Some required fields are missing — start slot-filling
-                    await logger.info('orchestrator', '[SLOT_FILLING] Creating session', { tool: toolSchema.function.name, missingFields, resolvedArgs });
-                    // ✅ upsert prevents race condition when user sends two messages rapidly
-                    await prisma.actionSession.upsert({
-                        where: { userId },
-                        update: { targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs },
-                        create: { userId, targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs }
+                    await logger.info('orchestrator', 'Creating SLOT_FILLING session', { tool: toolSchema.function.name, missingFields });
+                    await prisma.actionSession.create({
+                        data: { userId, targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs }
                     });
 
                     const nextMissing = missingFields[0];
@@ -1051,7 +714,7 @@ Ask a short, warm, natural question for it. Output only the question.`
                     await chatService.saveMessage(userId, 'assistant', text);
                     return { text, responseMode: 'CHAT' };
 
-                } else if (requiredFieldsAfter.length === 0) {
+                } else if (requiredFields.length === 0) {
                     // Zero-required tool (listDreams, getDashboard etc.) — execute immediately
                     await logger.info('orchestrator', 'Zero-required tool — executing immediately', { tool: toolSchema.function.name });
                     const result = await executeTool(toolSchema.function.name, extractedArgs, token);
@@ -1060,21 +723,12 @@ Ask a short, warm, natural question for it. Output only the question.`
                     await chatService.saveMessage(userId, 'assistant', text);
                     return { text, responseMode: 'SUCCESS' };
 
-                } else if (SKIP_CONFIRMATION_TOOLS.has(toolSchema.function.name)) {
-                    await logger.info('orchestrator', 'Tool skips confirmation — executing immediately', { tool: toolSchema.function.name });
-                    const result = await executeTool(toolSchema.function.name, resolvedArgs, token);
-                    await invalidateContextCache(userId);
-                    const text = await naturalizeResult(toolSchema.function.name, result, standalone_command || message);
-                    await chatService.saveMessage(userId, 'assistant', text);
-                    return { text, responseMode: 'SUCCESS' };
                 } else {
-                    // All required fields present — resolvedArgs already has entity-resolved UUIDs
-                    await logger.info('orchestrator', '[PENDING_CONFIRM] All fields present, creating confirmation session', { tool: toolSchema.function.name, resolvedArgs });
-                    // ✅ upsert prevents race condition
-                    await prisma.actionSession.upsert({
-                        where: { userId },
-                        update: { targetTool: toolSchema.function.name, status: 'PENDING_CONFIRM', collectedFields: resolvedArgs },
-                        create: { userId, targetTool: toolSchema.function.name, status: 'PENDING_CONFIRM', collectedFields: resolvedArgs }
+                    // All required fields present — resolve entities then ask for confirmation
+                    const resolvedArgs = await resolveEntityArgs(userId, extractedArgs);
+                    await logger.info('orchestrator', 'Creating PENDING_CONFIRM session', { tool: toolSchema.function.name });
+                    await prisma.actionSession.create({
+                        data: { userId, targetTool: toolSchema.function.name, status: 'PENDING_CONFIRM', collectedFields: resolvedArgs }
                     });
                     const confirmSummary = await buildConfirmSummary(resolvedArgs);
                     const text = `Here's what I'll do:\n${confirmSummary}\n\nShall I go ahead? (Yes / No)`;
@@ -1138,29 +792,19 @@ Ask a short, warm, natural question for it. Output only the question.`
                     await logger.info('orchestrator', `[AMBIGUOUS→KEYWORD_RESOLVE] picked "${resolvedTool.function.name}" via domain keyword`, { candidates: routerResult.candidates });
 
                     const extStart = Date.now();
-                    const systemPromptBase = `Extract JSON arguments for tool ${resolvedTool.function.name}. Schema: ${JSON.stringify(resolvedTool.function.parameters)}. User message: ${queryMessage}. Return a JSON object with extracted fields ONLY. CRITICAL: If a field is NOT explicitly mentioned in the user message, DO NOT include it in the JSON output. Omit it entirely! Do not invent values or use property names as values. CRITICAL: Every extracted field MUST strictly match the exact data type defined in the Schema (e.g., integers must be numbers). IMPORTANT: For dates (deadline, startDate, targetDate), convert natural language or abbreviations ("tomorrow", "nxt week", "end of month") to exact YYYY-MM-DD format based on today (${new Date().toISOString().split('T')[0]}). Do NOT output words for dates.`;
-                    
-                    const extractedArgs = await extractWithAutoCorrection(systemPromptBase, history as any[], resolvedTool, false);
-                    await logger.info('orchestrator', 'Slot Extraction (AMBIGUOUS resolved)', { ms: Date.now() - extStart });
-                    let resolvedArgs = await resolveEntityArgs(userId, extractedArgs);
-                    const requiredFields: string[] = resolvedTool.function.parameters?.required || [];
-                    let missingFields = requiredFields.filter(f => !resolvedArgs[f]);
+                    const extractionResponse = await groq.chat.completions.create({
+                        model: 'llama-3.1-8b-instant',
+                        messages: [{ role: 'system', content: `Extract JSON arguments for tool ${resolvedTool.function.name}. Schema: ${JSON.stringify(resolvedTool.function.parameters)}. User message: ${queryMessage}. Return a JSON object with extracted fields only. Do NOT invent UUIDs or values not present in the message.` }],
+                        response_format: { type: 'json_object' },
+                        max_tokens: 300,
+                        temperature: 0,
+                    });
+                    await logger.info('orchestrator', 'Slot Extraction (AMBIGUOUS resolved)', { ms: Date.now() - extStart, tokens: extractionResponse.usage?.total_tokens });
 
-                    // ── Autonomous Context Derivation ───────────────────────
-                    if (missingFields.length > 0) {
-                        const derivationContext = await deriveMissingSlots(missingFields, token);
-                        if (derivationContext) {
-                            await logger.info('orchestrator', '[GATEKEEPER AMBIGUOUS] Re-running extraction with derived context', {});
-                            const newSystemPrompt = systemPromptBase + derivationContext;
-                            
-                            // Re-extract using the new context
-                            const reExtractedArgs = await extractWithAutoCorrection(newSystemPrompt, history as any[], resolvedTool, false);
-                            
-                            // Re-resolve
-                            resolvedArgs = await resolveEntityArgs(userId, reExtractedArgs);
-                            missingFields = requiredFields.filter(f => !resolvedArgs[f]);
-                        }
-                    }
+                    const extractedArgs = JSON.parse(extractionResponse.choices[0]?.message?.content || '{}');
+                    const resolvedArgs = await resolveEntityArgs(userId, extractedArgs);
+                    const requiredFields: string[] = resolvedTool.function.parameters?.required || [];
+                    const missingFields = requiredFields.filter(f => !resolvedArgs[f]);
 
                     if (missingFields.length > 0) {
                         await prisma.actionSession.create({
@@ -1202,13 +846,6 @@ Ask a short, warm, natural question for it. Output only the question.`
                         await chatService.saveMessage(userId, 'assistant', text);
                         return { text, responseMode: 'SUCCESS' };
 
-                    } else if (SKIP_CONFIRMATION_TOOLS.has(resolvedTool.function.name)) {
-                        await logger.info('orchestrator', 'Tool skips confirmation — executing immediately', { tool: resolvedTool.function.name });
-                        const result = await executeTool(resolvedTool.function.name, resolvedArgs, token);
-                        await invalidateContextCache(userId);
-                        const text = await naturalizeResult(resolvedTool.function.name, result, standalone_command || message);
-                        await chatService.saveMessage(userId, 'assistant', text);
-                        return { text, responseMode: 'SUCCESS' };
                     } else {
                         await prisma.actionSession.create({
                             data: { userId, targetTool: resolvedTool.function.name, status: 'PENDING_CONFIRM', collectedFields: resolvedArgs }

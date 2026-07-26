@@ -159,9 +159,6 @@ export class DreamService {
 
       // 8. Delete the Dream itself
       await tx.dream.delete({ where: { id: dreamId } });
-    }, {
-      maxWait: 5000,
-      timeout: 20000,
     });
 
     await logger.info('dream', 'Dream and all associated data permanently deleted', { dreamId }, userId);
@@ -411,13 +408,6 @@ export class DreamService {
       orderBy: { createdAt: 'desc' },
       take: 10,
     });
-  }
-
-  async clearDraft(userId: string): Promise<void> {
-    const DRAFT_KEY = `dream:draft:${userId}`;
-    try {
-      await dreamDraftRedis.del(DRAFT_KEY);
-    } catch {}
   }
 
   async syncDreamState(
