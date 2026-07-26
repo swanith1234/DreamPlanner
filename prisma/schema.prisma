@@ -1,6 +1,14 @@
 generator client {
   provider = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
+  // Render's build container and runtime container aren't always the same
+  // OpenSSL version, and can drift independently of anything in this repo
+  // (e.g. a Render base-image update). With no binaryTargets, Prisma only
+  // ships whichever engine binary matches "native" at build time, which is
+  // exactly what produces "Error opening a TLS connection: OpenSSL error" at
+  // runtime the moment the two diverge. Pinning both current Debian OpenSSL
+  // variants makes the shipped engine binary correct regardless of drift.
+  binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
 }
 
 datasource db {
