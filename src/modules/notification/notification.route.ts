@@ -47,5 +47,10 @@ router.post('/test-direct', (req: Request, res: Response) => {
   testPushHandler(req, res);
 });
 
+// Silent action handler for notification action buttons / inline replies
+// (posted from public/sw.js and the native Android TaskActionReceiver).
+router.post('/:notificationId/action', (req: Request, res: Response, next: NextFunction) => {
+  notificationController.handleAction(req as any, res).catch(next);
+});
 
 export default router;

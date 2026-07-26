@@ -123,6 +123,24 @@ export class NotificationDispatcher {
   }
 
   /**
+   * The interactive progress-logging UI shown on task-linked push notifications:
+   * quick-tap deltas plus a WhatsApp-style inline text reply. Both Android
+   * (NotificationCompat actions, see MyFcmMessagingService.java) and Web
+   * (Notification.actions) render from this same list, so it's defined once, here.
+   *
+   * Most platforms only reliably surface ~3 action buttons in the collapsed tray —
+   * order matters more than count. `reply` covers "mark done" too (type "100"/"done").
+   */
+  private buildTaskPushActions() {
+    return [
+      { action: 'add_25', title: '+25%' },
+      { action: 'add_50', title: '+50%' },
+      { action: 'mark_done', title: 'Mark Done' },
+      { action: 'reply', title: 'Reply', type: 'text', placeholder: 'Type a %, "done", or a note…' },
+    ];
+  }
+
+  /**
    * Dispatch via web push
    */
   private async dispatchWebPush(
@@ -131,20 +149,25 @@ export class NotificationDispatcher {
     try {
       const { notification, user, task } = data;
 
-      const metadata = notification.metadata ? (typeof notification.metadata === 'string' ? JSON.parse(notification.metadata) : notification.metadata) : {};
-
       const agentName = user.preferences?.agentName || `Future ${user.name || 'you'}`;
+
+      // Any task-linked notification gets the interactive progress-logging UI.
+      // The action endpoint resolves the task's *current* active checkpoint at
+      // click-time (see notification.service.ts#applyPushAction), so we never need
+      // to bake a specific checkpoint id into the payload up front.
+      const pushActions = task ? this.buildTaskPushActions() : [];
+      const apiPath = task ? `/api/notifications/${notification.id}/action` : undefined;
 
       await pushService.sendPushNotification(user.id, {
         title: agentName,
         body: notification.message,
         icon: '/pwa-192x192.png',
-        actions: metadata.pushActions || [],
+        actions: pushActions,
         data: {
           url: task ? `/app/tasks/${task.id}` : '/app/home',
           notificationId: notification.id,
           apiUrl: process.env.API_URL || 'http://localhost:3000',
-          apiPath: metadata.apiPath
+          apiPath,
         }
       });
 

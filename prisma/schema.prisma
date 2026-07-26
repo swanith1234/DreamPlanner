@@ -846,6 +846,9 @@ model ActionSession {
   targetTool      String
   collectedFields Json
   status          ActionSessionStatus @default(DISCOVERY)
+  /// Processing lock — set to true while executeTool is running.
+  /// Prevents double-tap race condition when user sends two messages rapidly.
+  isProcessing    Boolean             @default(false)
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
 }

@@ -1,11 +1,12 @@
 // src/apiAdapter/dreamApi.ts
 // ─────────────────────────────────────────────────────────────────────────────
 // Axios wrappers for all dream REST endpoints.
-// Dream creation is a 3-step flow: createDraft → validateDream → confirmDream.
+// Every call is wrapped with apiCall() for full request/response logging.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import axios from 'axios';
 import { env } from '../config/env';
+import { apiCall } from './_log';
 
 const BASE = `http://localhost:${env.server.port}`;
 
@@ -16,8 +17,9 @@ function headers(token: string) {
 export const dreamApi = {
 
     async syncDreamState(token: string, body: any) {
-        const { data } = await axios.post(`${BASE}/api/dreams/sync`, body, { headers: headers(token) });
-        return data;
+        return apiCall('dreamApi.syncDreamState', 'POST', `${BASE}/api/dreams/sync`, body,
+            () => axios.post(`${BASE}/api/dreams/sync`, body, { headers: headers(token) }).then(r => r.data)
+        );
     },
 
     async createDraft(token: string, body: {
@@ -27,73 +29,68 @@ export const dreamApi = {
         impactScore: number;
         motivationStatement: string;
     }) {
-        const { data } = await axios.post(`${BASE}/api/dreams`, body, { headers: headers(token) });
-        return data;
+        return apiCall('dreamApi.createDraft', 'POST', `${BASE}/api/dreams`, body,
+            () => axios.post(`${BASE}/api/dreams`, body, { headers: headers(token) }).then(r => r.data)
+        );
     },
 
     async validateDream(token: string, dreamId: string) {
-        const { data } = await axios.post(
-            `${BASE}/api/dreams/${dreamId}/validate`,
-            {},
-            { headers: headers(token) }
+        return apiCall('dreamApi.validateDream', 'POST', `${BASE}/api/dreams/${dreamId}/validate`, null,
+            () => axios.post(`${BASE}/api/dreams/${dreamId}/validate`, {}, { headers: headers(token) }).then(r => r.data)
         );
-        return data;
     },
 
     async confirmDream(token: string, dreamId: string, checkpoints: any[]) {
-        const { data } = await axios.post(
-            `${BASE}/api/dreams/${dreamId}/confirm`,
-            { checkpoints },
-            { headers: headers(token) }
+        return apiCall('dreamApi.confirmDream', 'POST', `${BASE}/api/dreams/${dreamId}/confirm`, { checkpoints },
+            () => axios.post(`${BASE}/api/dreams/${dreamId}/confirm`, { checkpoints }, { headers: headers(token) }).then(r => r.data)
         );
-        return data;
     },
 
     async updateDream(token: string, dreamId: string, body: Record<string, any>) {
-        const { data } = await axios.put(`${BASE}/api/dreams/${dreamId}`, body, { headers: headers(token) });
-        return data;
+        return apiCall('dreamApi.updateDream', 'PUT', `${BASE}/api/dreams/${dreamId}`, body,
+            () => axios.put(`${BASE}/api/dreams/${dreamId}`, body, { headers: headers(token) }).then(r => r.data)
+        );
     },
 
     async archiveDream(token: string, dreamId: string) {
-        const { data } = await axios.delete(`${BASE}/api/dreams/${dreamId}`, { headers: headers(token) });
-        return data;
+        return apiCall('dreamApi.archiveDream', 'DELETE', `${BASE}/api/dreams/${dreamId}`, null,
+            () => axios.delete(`${BASE}/api/dreams/${dreamId}`, { headers: headers(token) }).then(r => r.data)
+        );
     },
 
     async completeDream(token: string, dreamId: string) {
-        const { data } = await axios.post(
-            `${BASE}/api/dreams/${dreamId}/complete`,
-            {},
-            { headers: headers(token) }
+        return apiCall('dreamApi.completeDream', 'POST', `${BASE}/api/dreams/${dreamId}/complete`, null,
+            () => axios.post(`${BASE}/api/dreams/${dreamId}/complete`, {}, { headers: headers(token) }).then(r => r.data)
         );
-        return data;
     },
 
     async failDream(token: string, dreamId: string) {
-        const { data } = await axios.post(
-            `${BASE}/api/dreams/${dreamId}/fail`,
-            {},
-            { headers: headers(token) }
+        return apiCall('dreamApi.failDream', 'POST', `${BASE}/api/dreams/${dreamId}/fail`, null,
+            () => axios.post(`${BASE}/api/dreams/${dreamId}/fail`, {}, { headers: headers(token) }).then(r => r.data)
         );
-        return data;
     },
 
     async getDream(token: string, dreamId: string) {
-        const { data } = await axios.get(`${BASE}/api/dreams/${dreamId}`, { headers: headers(token) });
-        return data;
+        return apiCall('dreamApi.getDream', 'GET', `${BASE}/api/dreams/${dreamId}`, null,
+            () => axios.get(`${BASE}/api/dreams/${dreamId}`, { headers: headers(token) }).then(r => r.data)
+        );
     },
 
     async listDreams(token: string, status?: string) {
         const params: Record<string, string> = {};
         if (status) params.status = status;
-        const { data } = await axios.get(`${BASE}/api/dreams`, { headers: headers(token), params });
-        return data;
+        const urlWithParams = `${BASE}/api/dreams${status ? `?status=${status}` : ''}`;
+        return apiCall('dreamApi.listDreams', 'GET', urlWithParams, null,
+            () => axios.get(`${BASE}/api/dreams`, { headers: headers(token), params }).then(r => r.data)
+        );
     },
 
     async searchDreams(token: string, keyword?: string, status?: string) {
         const params: Record<string, string> = {};
         if (keyword) params.keyword = keyword;
         if (status) params.status = status;
-        const { data } = await axios.get(`${BASE}/api/dreams/search`, { headers: headers(token), params });
-        return data;
+        return apiCall('dreamApi.searchDreams', 'GET', `${BASE}/api/dreams/search`, { keyword, status },
+            () => axios.get(`${BASE}/api/dreams/search`, { headers: headers(token), params }).then(r => r.data)
+        );
     },
 };
