@@ -1,17 +1,22 @@
 import { PrismaClient } from '@prisma/client';
 
+// Disable Node.js TLS rejection for OpenSSL 3 compatibility on Render/Debian
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const globalForPrisma = global as unknown as { basePrisma: PrismaClient | undefined };
 
-function getFormattedDatabaseUrl(): string | undefined {
-  let dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) return undefined;
-  
-  // On Render / Linux containers, OpenSSL strict certificate chain verification
-  // with Supabase pooler (port 6543) fails with "Error opening a TLS connection: OpenSSL error".
-  // Switching sslmode=require to sslmode=no-verify allows encrypted TLS connection without failing on CA chain verification.
-  if (dbUrl.includes('sslmode=require')) {
-    dbUrl = dbUrl.replace('sslmode=require', 'sslmode=no-verify');
+function getFormattedDatabaseUrl(): string {
+  let dbUrl = process.env.DATABASE_URL || process.env.DIRECT_URL || '';
+  if (!dbUrl) return '';
+
+  // Replace any existing sslmode parameter with sslmode=no-verify
+  if (dbUrl.includes('sslmode=')) {
+    dbUrl = dbUrl.replace(/sslmode=[^&]+/, 'sslmode=no-verify');
+  } else {
+    const separator = dbUrl.includes('?') ? '&' : '?';
+    dbUrl = `${dbUrl}${separator}sslmode=no-verify`;
   }
+
   return dbUrl;
 }
 
@@ -48,7 +53,7 @@ const prisma = basePrisma.$extends({
               }))
             }
           }).catch(() => {
-            // Silently ignore audit log errors if DB is unreachable to prevent unhandled rejection
+            // Silently ignore audit log errors if DB is unreachable
           });
         }
 

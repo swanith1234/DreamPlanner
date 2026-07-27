@@ -1,3 +1,6 @@
+// Ensure process-wide TLS setting for Node 22 on Render
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 import { env } from './config/env';
 import prisma from './config/database';
 import { logger } from './utils/logger';
@@ -24,6 +27,7 @@ async function start() {
     console.log(`🔌 WebSocket: Listening on /ws`);
 
   } catch (error: any) {
+    console.error('Failed to start server:', error.message);
     await logger.error('server', 'Failed to start server', {
       error: error.message,
     });
@@ -33,22 +37,17 @@ async function start() {
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-  // Disconnect database
   await prisma.$disconnect();
-
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   await logger.info('server', 'SIGINT received, shutting down gracefully');
-
-  // Disconnect database
   await prisma.$disconnect();
-
   process.exit(0);
 });
 
 start().catch(async (error) => {
-  await logger.error('server', 'Unhandled error during startup', { error: error.message });
+  console.error('Unhandled error during startup:', error.message);
   process.exit(1);
 });
