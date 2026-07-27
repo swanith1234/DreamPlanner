@@ -1,6 +1,10 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
+  // Fix: Render runs Debian Bookworm (OpenSSL 3.x). Without this, Prisma
+  // generates a binary linked against OpenSSL 1.1 which causes the
+  // "Error opening a TLS connection: OpenSSL error" on every DB call.
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {

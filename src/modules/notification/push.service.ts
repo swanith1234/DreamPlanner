@@ -2,7 +2,6 @@ import webpush from 'web-push';
 import * as admin from 'firebase-admin';
 import prisma from '../../config/database';
 import { logger } from '../../utils/logger';
-import { env } from '../../config/env';
 
 // Initialize Firebase Admin gracefully
 if (!admin.apps.length) {
@@ -21,7 +20,6 @@ if (!admin.apps.length) {
             logger.info('notification', 'Firebase Admin Initialized Successfully');
         } else {
             logger.warn('notification', 'FIREBASE_SERVICE_ACCOUNT not found. FCM Native Push will fail.');
-            // Initialize empty app to avoid immediate runtime crashes if called without credentials
             admin.initializeApp();
         }
     } catch (e: any) {
@@ -55,45 +53,82 @@ export class PushService {
 
             const promises = subscriptions.map(async (sub) => {
                 try {
-                    // Check if Native FCM Token via our mock key payload
+                    // Native FCM token (Android app via Capacitor)
                     if (sub.p256dh === 'NATIVE' || sub.auth === 'NATIVE' || !sub.p256dh) {
-                        await logger.info('notification', `[FCM] Sending to native device`, { subId: sub.id, token: sub.endpoint.substring(0, 10) + '...' });
-                        
-                        // FCM data values MUST all be strings
+                        await logger.info('notification', `[FCM] Sending data-only message to native device`, {
+                            subId: sub.id,
+                            token: sub.endpoint.substring(0, 15) + '...'
+                        });
+
+                        // ─── DATA-ONLY FCM ───────────────────────────────────────────────
+                        // We deliberately omit the top-level `notification` block.
+                        // This means FCM will NOT auto-display a system notification.
+                        // Instead, our MyFirebaseMessagingService.java receives the data
+                        // payload via onMessageReceived() and builds a rich local notification
+                        // with action buttons and RemoteInput (inline reply).
+                        //
+                        // BUG FIX: The previous `clickAction: 'inline_reply'` in
+                        // android.notification caused Android to look for an intent-filter
+                        // named 'inline_reply' — which doesn't exist — so clicking the
+                        // notification body silently dismissed the app instead of opening it.
+                        // ────────────────────────────────────────────────────────────────
+
+                        // All data values MUST be strings for FCM
                         const stringData: Record<string, string> = {};
                         if (payload.data) {
                             for (const [key, val] of Object.entries(payload.data)) {
                                 stringData[key] = String(val);
                             }
                         }
-                        stringData.actionId = 'inline_reply';
-                        stringData.click_action = 'inline_reply';
+
+                        // Core notification content — passed to MyFirebaseMessagingService
+                        stringData.title    = payload.title  || 'IgniteMate';
+                        stringData.body     = payload.body   || '';
+                        stringData.icon     = payload.icon   || '';
+                        stringData.tag      = stringData.notificationId || userId;
+
+                        // Actions JSON — parsed by MyFirebaseMessagingService to build buttons
+                        if (payload.actions && payload.actions.length > 0) {
+                            stringData.actions = JSON.stringify(payload.actions);
+                        } else {
+                            // Default progress actions always included
+                            stringData.actions = JSON.stringify([
+                                { label: '+25%',      actionType: 'PROGRESS', value: '25'   },
+                                { label: '+50%',      actionType: 'PROGRESS', value: '50'   },
+                                { label: 'Mark Done', actionType: 'PROGRESS', value: '100'  },
+                            ]);
+                        }
+
+                        // Auth token so the BroadcastReceiver can call the backend
+                        // We store it in shared prefs on the device — send it here so the
+                        // service can cache it.
+                        stringData.apiUrl = process.env.API_URL || 'https://your-render-url.onrender.com';
 
                         const fcmMessage: admin.messaging.Message = {
                             token: sub.endpoint,
-                            notification: {
-                                title: payload.title || "IgniteMate",
-                                body: payload.body || "New message"
-                            },
+                            // No `notification` block → data-only, handled by our service
                             data: stringData,
                             android: {
-                                notification: {
-                                    clickAction: 'inline_reply'
-                                }
+                                priority: 'high', // Required for data-only to wake up the device
                             },
                             apns: {
+                                headers: {
+                                    'apns-priority': '10',
+                                },
                                 payload: {
                                     aps: {
-                                        category: 'inline_reply'
+                                        contentAvailable: true,
+                                        category: 'PROGRESS_ACTIONS',
                                     }
                                 }
                             }
                         };
-                        
+
                         const response = await admin.messaging().send(fcmMessage);
-                        await logger.info('notification', `[FCM] Send success`, { response });
+                        await logger.info('notification', `[FCM] Data-only send success`, { response });
+
                     } else {
-                        // Standard Web Push
+                        // Standard Web Push (browser)
                         const notificationPayload = JSON.stringify(payload);
                         const pushSubscription = {
                             endpoint: sub.endpoint,
@@ -102,16 +137,20 @@ export class PushService {
                                 p256dh: sub.p256dh,
                             },
                         };
-
                         await webpush.sendNotification(pushSubscription, notificationPayload);
                     }
                 } catch (error: any) {
-                    await logger.error('notification', `[PUSH FAIL] type=${sub.p256dh === 'NATIVE' ? 'FCM' : 'WebPush'}`, { 
-                        error: error.message, 
+                    await logger.error('notification', `[PUSH FAIL] type=${sub.p256dh === 'NATIVE' ? 'FCM' : 'WebPush'}`, {
+                        error: error.message,
                         code: error.code,
-                        subId: sub.id 
+                        subId: sub.id
                     });
-                    if (error.statusCode === 410 || error.statusCode === 404 || error.code === 'messaging/registration-token-not-registered') {
+                    // Clean up stale tokens
+                    if (
+                        error.statusCode === 410 ||
+                        error.statusCode === 404 ||
+                        error.code === 'messaging/registration-token-not-registered'
+                    ) {
                         await prisma.pushSubscription.delete({ where: { id: sub.id } });
                     }
                 }

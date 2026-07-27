@@ -24,9 +24,14 @@ export class Logger {
     const numericLevel = this.logLevel[level.toLowerCase()] || 1;
     if (numericLevel < this.getCurrentLevel()) return;
 
+    // Always log to console first — this never fails.
     console.log(`[${level}] [${source}] ${message}`, context || '');
 
-    // Store in DB for analytics
+    // Attempt to persist to DB. If DB is unavailable (e.g. OpenSSL TLS error
+    // during startup), we silently fall back to console-only.
+    // IMPORTANT: Never re-throw inside here — doing so caused an infinite
+    // error cascade where a failed startup DB check triggered logger.error()
+    // which triggered prisma.appLog.create() which failed again.
     try {
       await prisma.appLog.create({
         data: {
@@ -37,8 +42,8 @@ export class Logger {
           userId,
         },
       });
-    } catch (err) {
-      console.error('Failed to log to DB:', err);
+    } catch {
+      // DB unavailable — console already has the log, nothing else to do.
     }
   }
 

@@ -4,9 +4,14 @@ import { notificationController } from './notification.controller';
 import { pushController } from './push.controller';
 import { authMiddleware } from '../../middleware/auth';
 import { runNotificationCron } from './notification.cron';
+import { notificationActionHandler } from './notification.action.handler';
+import { testPushHandler } from './test-push.handler';
+
 const router = Router();
 
-// Public Webhook for External Cron (e.g. Render) to trigger every minute
+// ─── Public Routes (no auth required) ────────────────────────────────────────
+
+// External cron trigger (Render cron job hits this every minute)
 router.post('/cron/trigger', async (req, res) => {
   try {
     const result = await runNotificationCron();
@@ -16,7 +21,14 @@ router.post('/cron/trigger', async (req, res) => {
   }
 });
 
-// Protected User Routes
+// Notification action webhook — called directly by Android BroadcastReceiver.
+// No JWT available in that context (no browser/cookie), so this is public.
+// Security: validated by notificationId + userId existence in DB.
+router.post('/action', async (req: Request, res: Response) => {
+  await notificationActionHandler(req, res);
+});
+
+// ─── Protected Routes ─────────────────────────────────────────────────────────
 router.use(authMiddleware);
 
 router.get('/', (req: Request, res: Response, next: NextFunction) => {
@@ -35,10 +47,6 @@ router.post('/check-subscription', (req, res, next) => {
   pushController.checkSubscription(req, res).catch(next);
 });
 
-import { testPushHandler } from './test-push.handler';
-
-// ... (other imports)
-
 router.get('/vapid-key', (req, res, next) => {
   pushController.getVapidKey(req, res).catch(next);
 });
@@ -46,6 +54,5 @@ router.get('/vapid-key', (req, res, next) => {
 router.post('/test-direct', (req: Request, res: Response) => {
   testPushHandler(req, res);
 });
-
 
 export default router;
