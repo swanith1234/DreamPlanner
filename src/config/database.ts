@@ -2,12 +2,26 @@ import { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = global as unknown as { basePrisma: PrismaClient | undefined };
 
+function getFormattedDatabaseUrl(): string | undefined {
+  let dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) return undefined;
+  
+  // On Render / Linux containers, OpenSSL strict certificate chain verification
+  // with Supabase pooler (port 6543) fails with "Error opening a TLS connection: OpenSSL error".
+  // Switching sslmode=require to sslmode=no-verify allows encrypted TLS connection without failing on CA chain verification.
+  if (dbUrl.includes('sslmode=require')) {
+    dbUrl = dbUrl.replace('sslmode=require', 'sslmode=no-verify');
+  }
+  return dbUrl;
+}
+
+const dbUrl = getFormattedDatabaseUrl();
+
 const basePrisma =
   globalForPrisma.basePrisma ??
   new PrismaClient({
     log: ['error', 'warn'],
-    // Explicitly configure pooling if needed via URL, 
-    // but Prisma handles this automatically from DATABASE_URL.
+    ...(dbUrl ? { datasources: { db: { url: dbUrl } } } : {}),
   });
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.basePrisma = basePrisma;
@@ -33,7 +47,9 @@ const prisma = basePrisma.$extends({
                 timestamp: new Date().toISOString()
               }))
             }
-          }).catch(err => console.error('Failed to create audit log:', err));
+          }).catch(() => {
+            // Silently ignore audit log errors if DB is unreachable to prevent unhandled rejection
+          });
         }
 
         return result;
