@@ -1,21 +1,32 @@
 import { PrismaClient } from '@prisma/client';
 
-// Disable Node.js TLS rejection for OpenSSL 3 compatibility on Render/Debian
+// Disable Node.js TLS rejection for OpenSSL 3 compatibility on Render/Linux
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const globalForPrisma = global as unknown as { basePrisma: PrismaClient | undefined };
 
 function getFormattedDatabaseUrl(): string {
-  let dbUrl = process.env.DATABASE_URL || process.env.DIRECT_URL || '';
+  // Prefer DIRECT_URL (port 5432) over DATABASE_URL (port 6543).
+  // Port 6543 is PgBouncer transaction pooler, which drops Rust engine TLS handshakes on Linux/Render.
+  // Port 5432 is direct PostgreSQL/Supavisor, which handles standard TLS handshakes cleanly.
+  let dbUrl = process.env.DIRECT_URL || process.env.DATABASE_URL || '';
   if (!dbUrl) return '';
 
-  // Replace any existing sslmode parameter with sslmode=no-verify
+  // Convert port 6543 to 5432 to bypass PgBouncer TLS handshake issues on Render
+  if (dbUrl.includes(':6543')) {
+    dbUrl = dbUrl.replace(':6543', ':5432');
+  }
+
+  // Force sslmode=no-verify
   if (dbUrl.includes('sslmode=')) {
     dbUrl = dbUrl.replace(/sslmode=[^&]+/, 'sslmode=no-verify');
   } else {
     const separator = dbUrl.includes('?') ? '&' : '?';
     dbUrl = `${dbUrl}${separator}sslmode=no-verify`;
   }
+
+  // Remove pgbouncer=true parameter when connecting to port 5432
+  dbUrl = dbUrl.replace(/&?pgbouncer=true/g, '');
 
   return dbUrl;
 }
