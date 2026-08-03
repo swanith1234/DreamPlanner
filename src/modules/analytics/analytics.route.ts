@@ -4,7 +4,9 @@ import { authMiddleware } from '../../middleware/auth';
 
 const router = Router();
 
-// Public route for external cron (e.g. Render) to trigger weekly snapshots for ALL users
+// Public route for external cron (free third-party worker) to trigger weekly
+// snapshots for ALL users. Intentionally unauthenticated — the chosen cron
+// provider cannot send custom headers.
 router.post('/cron/weekly', (req, res) => analyticsController.runWeeklyCron(req, res));
 router.post('/cron/daily', (req, res) => analyticsController.runDailyCron(req, res));
 

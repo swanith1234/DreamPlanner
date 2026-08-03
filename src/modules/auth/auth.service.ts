@@ -47,7 +47,12 @@ export class AuthService {
         preferences: {
           create: {
             motivationTone: MotivationTone.NEUTRAL,
-            notificationFrequency: 1, // 1 hour default
+            // Interval between reminders, in MINUTES.
+            // notification.scheduler.computeNextNotificationTime() does
+            // `setMinutes(getMinutes() + notificationFrequency)`, and the Settings
+            // slider ranges 60..1440 step 60. Seeding `1` here meant every new user
+            // received a reminder every 60 SECONDS until they opened Settings.
+            notificationFrequency: 60, // 1 hour default
             sleepStart: '23:30',
             sleepEnd: '06:30',
             quietHours: [

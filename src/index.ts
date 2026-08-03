@@ -1,6 +1,3 @@
-// Ensure process-wide TLS setting for Node 22 on Render
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
 import { env } from './config/env';
 import prisma from './config/database';
 import { logger } from './utils/logger';

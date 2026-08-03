@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "dev": "nodemon --exec ts-node src/index.ts",
     "build": "NODE_OPTIONS='--max-old-space-size=460' tsc",
     "start": "NODE_OPTIONS='--max-old-space-size=460' node dist/index.js",
@@ -59,6 +60,7 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.11",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "vitest": "^3.2.7"
   }
 }

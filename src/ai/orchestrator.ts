@@ -10,6 +10,12 @@ import { notificationWS } from '../modules/notification/websocket.server';
 import { pushService } from '../modules/notification/push.service';
 import prisma from '../config/database';
 import { resolveTask, resolveDream } from '../services/entityResolver';
+import {
+    stripInternalKeys,
+    buildDisambiguationContext,
+    type ResolutionMeta,
+    type ResolvedEntities,
+} from './resolution';
 
 import { executeWithFallback, type ChatMessage } from './llmClient';
 
@@ -69,19 +75,33 @@ function isValidUUID(v: string): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// resolveEntityArgs
-// Converts any dreamId / taskId reference into a real UUID, in priority order:
+// Entity resolution
+//
+// resolveEntityArgs() returns TWO separate structures:
+//
+//   args → clean, tool-safe arguments. ONLY this may reach executeTool(),
+//          an outbound HTTP body, or ActionSession.collectedFields.
+//   meta → presentation / ambiguity data (resolved titles, candidate lists).
+//          ONLY this feeds confirmation text and disambiguation prompts.
+//
+// Previously both were merged into a single object, so `_dreamChoices` — the
+// user's entire dream list — was passed into executeTool(), spread into
+// PUT /api/tasks/:id request bodies, persisted into ActionSession.collectedFields,
+// and could render inside the confirmation bubble.
+//
+// Resolution order for each id field:
 //   1. Already a UUID → pass through
 //   2. Temporal signal ("oldest", "newest") → Prisma ORDER BY createdAt
 //   3. Title/keyword → vector similarity search (entityResolver)
-//   4. Still not a UUID → auto-fetch all active entities:
+//   4. Still unresolved → auto-fetch all active entities:
 //        • Exactly 1  → use it automatically
-//        • Multiple   → clear the field (adds it to missingFields) and store
-//                       choices in _dreamChoices so the slot-fill prompt can
-//                       present a numbered list to the user
+//        • Multiple   → clear the field (so it lands in missingFields) and record
+//                       the candidates in meta for a numbered disambiguation list
 // ─────────────────────────────────────────────────────────────────────────────
-async function resolveEntityArgs(userId: string, args: Record<string, any>): Promise<Record<string, any>> {
-    const resolved = { ...args };
+
+async function resolveEntityArgs(userId: string, args: Record<string, any>): Promise<ResolvedEntities> {
+    const resolved = stripInternalKeys(args);
+    const meta: ResolutionMeta = {};
 
     // ── dreamId ──────────────────────────────────────────────────────────────
     if (resolved.dreamId && typeof resolved.dreamId === 'string') {
@@ -99,7 +119,7 @@ async function resolveEntityArgs(userId: string, args: Record<string, any>): Pro
                 if (dream) {
                     await logger.info('orchestrator', `[ENTITY] dreamId "oldest" → "${dream.title}"`, {});
                     resolved.dreamId = dream.id;
-                    resolved._dreamTitle = dream.title;
+                    meta.dreamTitle = dream.title;
                 }
             } else if (NEWEST_SIGNALS.some(s => hint.includes(s))) {
                 const dream = await prisma.dream.findFirst({
@@ -110,7 +130,7 @@ async function resolveEntityArgs(userId: string, args: Record<string, any>): Pro
                 if (dream) {
                     await logger.info('orchestrator', `[ENTITY] dreamId "newest" → "${dream.title}"`, {});
                     resolved.dreamId = dream.id;
-                    resolved._dreamTitle = dream.title;
+                    meta.dreamTitle = dream.title;
                 }
             } else {
                 // Try vector similarity first
@@ -119,7 +139,7 @@ async function resolveEntityArgs(userId: string, args: Record<string, any>): Pro
                     const dream = await prisma.dream.findUnique({ where: { id }, select: { title: true } });
                     await logger.info('orchestrator', `[ENTITY] dreamId "${resolved.dreamId}" → "${dream?.title}" (vector)`, {});
                     resolved.dreamId = id;
-                    if (dream) resolved._dreamTitle = dream.title;
+                    if (dream) meta.dreamTitle = dream.title;
                 }
             }
 
@@ -135,11 +155,11 @@ async function resolveEntityArgs(userId: string, args: Record<string, any>): Pro
                     // Only one dream — use it automatically
                     await logger.info('orchestrator', `[ENTITY] dreamId auto-resolved to only dream: "${allDreams[0].title}"`, {});
                     resolved.dreamId = allDreams[0].id;
-                    resolved._dreamTitle = allDreams[0].title;
+                    meta.dreamTitle = allDreams[0].title;
                 } else if (allDreams.length > 1) {
                     // Multiple dreams — need user to pick. Clear dreamId so it lands in missingFields.
                     await logger.info('orchestrator', `[ENTITY] dreamId ambiguous — ${allDreams.length} dreams found, requesting disambiguation`, {});
-                    resolved._dreamChoices = allDreams; // [{id, title}]
+                    meta.dreamChoices = allDreams; // [{id, title}]
                     resolved.dreamId = undefined;       // force into missingFields
                 } else {
                     // No active dreams
@@ -162,20 +182,20 @@ async function resolveEntityArgs(userId: string, args: Record<string, any>): Pro
                     orderBy: { createdAt: 'asc' },
                     select: { id: true, title: true },
                 });
-                if (task) { resolved.taskId = task.id; resolved._taskTitle = task.title; }
+                if (task) { resolved.taskId = task.id; meta.taskTitle = task.title; }
             } else if (NEWEST.some(s => hint.includes(s))) {
                 const task = await prisma.task.findFirst({
                     where: { userId, status: { not: 'ARCHIVED' } },
                     orderBy: { createdAt: 'desc' },
                     select: { id: true, title: true },
                 });
-                if (task) { resolved.taskId = task.id; resolved._taskTitle = task.title; }
+                if (task) { resolved.taskId = task.id; meta.taskTitle = task.title; }
             } else {
                 const id = await resolveTask(userId, resolved.taskId);
                 if (id) {
                     const task = await prisma.task.findUnique({ where: { id }, select: { title: true } });
                     resolved.taskId = id;
-                    if (task) resolved._taskTitle = task.title;
+                    if (task) meta.taskTitle = task.title;
                 }
             }
 
@@ -189,9 +209,9 @@ async function resolveEntityArgs(userId: string, args: Record<string, any>): Pro
                 });
                 if (allTasks.length === 1) {
                     resolved.taskId = allTasks[0].id;
-                    resolved._taskTitle = allTasks[0].title;
+                    meta.taskTitle = allTasks[0].title;
                 } else if (allTasks.length > 1) {
-                    resolved._taskChoices = allTasks;
+                    meta.taskChoices = allTasks;
                     resolved.taskId = undefined;
                 } else {
                     resolved.taskId = undefined;
@@ -200,7 +220,7 @@ async function resolveEntityArgs(userId: string, args: Record<string, any>): Pro
         }
     }
 
-    return resolved;
+    return { args: resolved, meta };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,27 +228,34 @@ async function resolveEntityArgs(userId: string, args: Record<string, any>): Pro
 // Converts args into a human-readable bullet list for confirmation display.
 // ID fields are looked up by name. Internal _display fields are used when set.
 // ─────────────────────────────────────────────────────────────────────────────
-async function buildConfirmSummary(args: Record<string, any>): Promise<string> {
-    const INTERNAL = new Set(['_dreamTitle', '_taskTitle', 'confirmed']); // stripped from output
+async function buildConfirmSummary(
+    args: Record<string, any>,
+    meta: ResolutionMeta = {},
+): Promise<string> {
     const lines: string[] = [];
 
-    // Show resolved dream/task name instead of UUID
+    // Show resolved dream/task name instead of the UUID.
     if (args.dreamId) {
-        const title = args._dreamTitle
+        const title = meta.dreamTitle
             ?? (await prisma.dream.findUnique({ where: { id: args.dreamId }, select: { title: true } }))?.title
             ?? args.dreamId;
         lines.push(`• **Dream**: ${title}`);
     }
     if (args.taskId) {
-        const title = args._taskTitle
+        const title = meta.taskTitle
             ?? (await prisma.task.findUnique({ where: { id: args.taskId }, select: { title: true } }))?.title
             ?? args.taskId;
         lines.push(`• **Task**: ${title}`);
     }
 
-    // All other non-internal, non-ID fields
-    const SKIP = new Set(['dreamId', 'taskId', 'roadmapId', 'checkpointId', 'milestoneId', 'skillId', ...INTERNAL]);
+    // Every other displayable field. `args` is already free of `_`-prefixed
+    // resolver internals, but we defensively skip them plus raw ID fields so a
+    // candidate list can never be rendered into the confirmation bubble.
+    const SKIP = new Set([
+        'dreamId', 'taskId', 'roadmapId', 'checkpointId', 'milestoneId', 'skillId', 'confirmed',
+    ]);
     for (const [k, v] of Object.entries(args)) {
+        if (k.startsWith('_')) continue;
         if (!SKIP.has(k) && v !== null && v !== undefined && v !== '') {
             lines.push(`• **${k}**: ${v}`);
         }
@@ -236,6 +263,7 @@ async function buildConfirmSummary(args: Record<string, any>): Promise<string> {
 
     return lines.length > 0 ? lines.join('\n') : '(no additional details)';
 }
+
 
 
 async function detectIntent(message: string, history: any[]): Promise<{ intent: 'ACTION' | 'CHAT', complexity: 'SIMPLE' | 'COMPLEX', standalone_command?: string, usage?: any, ms?: number }> {
@@ -437,7 +465,7 @@ User message: "${message}"`
                 }
 
                 // Resolve any entity IDs (dreamId, taskId) semantically
-                const resolvedFields = await resolveEntityArgs(userId, mergedFields);
+                const { args: resolvedFields, meta: resolutionMeta } = await resolveEntityArgs(userId, mergedFields);
                 const missingFields = requiredFields.filter(f => !resolvedFields[f]);
 
                 if (missingFields.length > 0) {
@@ -446,14 +474,7 @@ User message: "${message}"`
 
                     // ── STEP 6: Conversational Polish ─────────────────────────────────
                     const nextMissing = missingFields[0];
-                    let disambiguationContext = '';
-                    if (nextMissing === 'dreamId' && resolvedFields._dreamChoices) {
-                        disambiguationContext = `NOTE: Multiple dreams were found. Ask the user to pick one from this list:\n` + 
-                            resolvedFields._dreamChoices.map((d: any, i: number) => `${i+1}. ${d.title}`).join('\n');
-                    } else if (nextMissing === 'taskId' && resolvedFields._taskChoices) {
-                        disambiguationContext = `NOTE: Multiple tasks were found. Ask the user to pick one from this list:\n` + 
-                            resolvedFields._taskChoices.map((t: any, i: number) => `${i+1}. ${t.title}`).join('\n');
-                    }
+                    const disambiguationContext = buildDisambiguationContext(nextMissing, resolutionMeta);
 
                     const polishStart = Date.now();
                     const polishResponse = await groq.chat.completions.create({
@@ -484,7 +505,7 @@ Be warm and human. Output only the question — no preamble, no explanation.`
                 } else {
                     await logger.info('orchestrator', 'All fields collected, moving to PENDING_CONFIRM', { resolvedFields });
                     await prisma.actionSession.update({ where: { userId }, data: { collectedFields: resolvedFields, status: 'PENDING_CONFIRM' } });
-                    const confirmSummary = await buildConfirmSummary(resolvedFields);
+                    const confirmSummary = await buildConfirmSummary(resolvedFields, resolutionMeta);
                     const text = `Got everything I need. Here's a summary of what I'll do:\n${confirmSummary}\n\nShall I go ahead? (Yes / No)`;
                     await chatService.saveMessage(userId, 'assistant', text);
                     return { text, responseMode: 'CHAT' };
@@ -519,7 +540,7 @@ Output only valid JSON.`
 
                 if (pcIntent === 'YES') {
                     const execStart = Date.now();
-                    const resolvedFields = await resolveEntityArgs(userId, session.collectedFields as Record<string, any>);
+                    const { args: resolvedFields } = await resolveEntityArgs(userId, session.collectedFields as Record<string, any>);
                     const result = await executeTool(session.targetTool, resolvedFields, token);
                     await logger.info('orchestrator', 'Tool Execution Success', { ms: Date.now() - execStart, tool: session.targetTool });
                     await prisma.actionSession.delete({ where: { userId } });
@@ -537,7 +558,7 @@ Output only valid JSON.`
                         if (v !== null && v !== undefined && v !== '') mergedFields[k] = v;
                     }
                     // Resolve any title-style dreamId / taskId to actual UUIDs
-                    mergedFields = await resolveEntityArgs(userId, mergedFields);
+                    ({ args: mergedFields } = await resolveEntityArgs(userId, mergedFields));
                     await logger.info('orchestrator', 'PENDING_CONFIRM correction received, merging & re-confirming', { corrected, mergedFields });
                     await prisma.actionSession.update({
                         where: { userId },
@@ -620,10 +641,16 @@ Output only valid JSON.`
                 });
 
                 const extractedArgs = JSON.parse(extractionResponse.choices[0]?.message?.content || '{}');
-                const resolvedArgs = await resolveEntityArgs(userId, extractedArgs);
+                // ONE authoritative resolution for this turn. Everything downstream —
+                // validation, confirmation display, execution — reads from `resolvedArgs`.
+                // Validating against `extractedArgs` here was the source of confirmation
+                // sessions carrying `dreamId: undefined`: an unresolvable name like
+                // "fitness" stayed truthy in the raw extraction, so the field looked
+                // present while resolution had already cleared it.
+                const { args: resolvedArgs, meta: resolutionMeta } = await resolveEntityArgs(userId, extractedArgs);
 
                 const requiredFields: string[] = toolSchema.function.parameters?.required || [];
-                const missingFields = requiredFields.filter(f => !extractedArgs[f]);
+                const missingFields = requiredFields.filter(f => !resolvedArgs[f]);
 
                 // ── SERVICE-DRIVEN TOOLS: route to the service immediately ────────
                 // These tools manage their own state (Redis etc.) — just call them.
@@ -632,8 +659,10 @@ Output only valid JSON.`
                 if (SERVICE_DRIVEN_TOOLS_INIT.has(toolSchema.function.name)) {
                     await logger.info('orchestrator', `[SERVICE-DRIVEN INIT] Creating session and calling ${toolSchema.function.name} directly`, {});
                     // Create a SLOT_FILLING session to intercept future turns
-                    await prisma.actionSession.create({
-                        data: { userId, targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: extractedArgs }
+                    await prisma.actionSession.upsert({
+                        where: { userId },
+                        create: { userId, targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs },
+                        update: { targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs },
                     });
                     // Call the service immediately with whatever was extracted
                     const result = await executeTool(toolSchema.function.name, resolvedArgs, token);
@@ -681,19 +710,14 @@ Output only valid JSON.`
                 if (missingFields.length > 0) {
                     // Some required fields are missing — start slot-filling
                     await logger.info('orchestrator', 'Creating SLOT_FILLING session', { tool: toolSchema.function.name, missingFields });
-                    await prisma.actionSession.create({
-                        data: { userId, targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs }
+                    await prisma.actionSession.upsert({
+                        where: { userId },
+                        create: { userId, targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs },
+                        update: { targetTool: toolSchema.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs },
                     });
 
                     const nextMissing = missingFields[0];
-                    let disambiguationContext = '';
-                    if (nextMissing === 'dreamId' && resolvedArgs._dreamChoices) {
-                        disambiguationContext = `NOTE: Multiple dreams were found. Ask the user to pick one from this list:\n` + 
-                            resolvedArgs._dreamChoices.map((d: any, i: number) => `${i+1}. ${d.title}`).join('\n');
-                    } else if (nextMissing === 'taskId' && resolvedArgs._taskChoices) {
-                        disambiguationContext = `NOTE: Multiple tasks were found. Ask the user to pick one from this list:\n` + 
-                            resolvedArgs._taskChoices.map((t: any, i: number) => `${i+1}. ${t.title}`).join('\n');
-                    }
+                    const disambiguationContext = buildDisambiguationContext(nextMissing, resolutionMeta);
 
                     // Conversational Polish: ask naturally for first missing field
                     const polishRes = await groq.chat.completions.create({
@@ -724,13 +748,17 @@ Ask a short, warm, natural question for it. Output only the question.`
                     return { text, responseMode: 'SUCCESS' };
 
                 } else {
-                    // All required fields present — resolve entities then ask for confirmation
-                    const resolvedArgs = await resolveEntityArgs(userId, extractedArgs);
+                    // All required fields present — ask for confirmation.
+                    // NOTE: entities were already resolved once above; re-resolving here
+                    // cost a second embedding + pgvector round-trip per turn and could
+                    // produce a different result than the one we validated against.
                     await logger.info('orchestrator', 'Creating PENDING_CONFIRM session', { tool: toolSchema.function.name });
-                    await prisma.actionSession.create({
-                        data: { userId, targetTool: toolSchema.function.name, status: 'PENDING_CONFIRM', collectedFields: resolvedArgs }
+                    await prisma.actionSession.upsert({
+                        where: { userId },
+                        create: { userId, targetTool: toolSchema.function.name, status: 'PENDING_CONFIRM', collectedFields: resolvedArgs },
+                        update: { targetTool: toolSchema.function.name, status: 'PENDING_CONFIRM', collectedFields: resolvedArgs },
                     });
-                    const confirmSummary = await buildConfirmSummary(resolvedArgs);
+                    const confirmSummary = await buildConfirmSummary(resolvedArgs, resolutionMeta);
                     const text = `Here's what I'll do:\n${confirmSummary}\n\nShall I go ahead? (Yes / No)`;
                     await chatService.saveMessage(userId, 'assistant', text);
                     return { text, responseMode: 'CHAT' };
@@ -752,7 +780,25 @@ Ask a short, warm, natural question for it. Output only the question.`
 
                 if (topName && READ_ONLY_TOOLS.has(topName)) {
                     await logger.info('orchestrator', `[AMBIGUOUS→EXECUTE] read-only "${topName}" — executing directly`, { candidates: routerResult.candidates });
-                    const result = await executeTool(topName, {}, token);
+
+                    // Extract and resolve the caller's filters before executing.
+                    // Passing `{}` here meant "show my AgroNexus tasks" ran an
+                    // unfiltered listTasks(), and the naturalizer then confidently
+                    // summarised the wrong set.
+                    const roExtraction = await groq.chat.completions.create({
+                        model: 'llama-3.1-8b-instant',
+                        messages: [{
+                            role: 'system',
+                            content: `Extract JSON arguments for tool ${topName}. Schema: ${JSON.stringify(topTool.function.parameters ?? {})}. User message: ${queryMessage}. Return a JSON object with extracted fields only. Do NOT invent UUIDs or values not present in the message.`,
+                        }],
+                        response_format: { type: 'json_object' },
+                        max_tokens: 300,
+                        temperature: 0,
+                    });
+                    const roExtracted = JSON.parse(roExtraction.choices[0]?.message?.content || '{}');
+                    const { args: roArgs } = await resolveEntityArgs(userId, roExtracted);
+
+                    const result = await executeTool(topName, roArgs, token);
                     await invalidateContextCache(userId);
                     const text = await naturalizeResult(topName, result, standalone_command || message);
                     await chatService.saveMessage(userId, 'assistant', text);
@@ -802,24 +848,19 @@ Ask a short, warm, natural question for it. Output only the question.`
                     await logger.info('orchestrator', 'Slot Extraction (AMBIGUOUS resolved)', { ms: Date.now() - extStart, tokens: extractionResponse.usage?.total_tokens });
 
                     const extractedArgs = JSON.parse(extractionResponse.choices[0]?.message?.content || '{}');
-                    const resolvedArgs = await resolveEntityArgs(userId, extractedArgs);
+                    const { args: resolvedArgs, meta: resolutionMeta } = await resolveEntityArgs(userId, extractedArgs);
                     const requiredFields: string[] = resolvedTool.function.parameters?.required || [];
                     const missingFields = requiredFields.filter(f => !resolvedArgs[f]);
 
                     if (missingFields.length > 0) {
-                        await prisma.actionSession.create({
-                            data: { userId, targetTool: resolvedTool.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs }
+                        await prisma.actionSession.upsert({
+                            where: { userId },
+                            create: { userId, targetTool: resolvedTool.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs },
+                            update: { targetTool: resolvedTool.function.name, status: 'SLOT_FILLING', collectedFields: resolvedArgs },
                         });
 
                         const nextMissing = missingFields[0];
-                        let disambiguationContext = '';
-                        if (nextMissing === 'dreamId' && resolvedArgs._dreamChoices) {
-                            disambiguationContext = `NOTE: Multiple dreams were found. Ask the user to pick one from this list:\n` + 
-                                resolvedArgs._dreamChoices.map((d: any, i: number) => `${i+1}. ${d.title}`).join('\n');
-                        } else if (nextMissing === 'taskId' && resolvedArgs._taskChoices) {
-                            disambiguationContext = `NOTE: Multiple tasks were found. Ask the user to pick one from this list:\n` + 
-                                resolvedArgs._taskChoices.map((t: any, i: number) => `${i+1}. ${t.title}`).join('\n');
-                        }
+                        const disambiguationContext = buildDisambiguationContext(nextMissing, resolutionMeta);
 
                         const polishRes = await groq.chat.completions.create({
                             model: 'llama-3.1-8b-instant',
@@ -847,10 +888,12 @@ Ask a short, warm, natural question for it. Output only the question.`
                         return { text, responseMode: 'SUCCESS' };
 
                     } else {
-                        await prisma.actionSession.create({
-                            data: { userId, targetTool: resolvedTool.function.name, status: 'PENDING_CONFIRM', collectedFields: resolvedArgs }
+                        await prisma.actionSession.upsert({
+                            where: { userId },
+                            create: { userId, targetTool: resolvedTool.function.name, status: 'PENDING_CONFIRM', collectedFields: resolvedArgs },
+                            update: { targetTool: resolvedTool.function.name, status: 'PENDING_CONFIRM', collectedFields: resolvedArgs },
                         });
-                        const confirmSummary = await buildConfirmSummary(resolvedArgs);
+                        const confirmSummary = await buildConfirmSummary(resolvedArgs, resolutionMeta);
                         const text = `Ready to go! Here's what I'll do:\n${confirmSummary}\n\nShall I proceed? (Yes / No)`;
                         await chatService.saveMessage(userId, 'assistant', text);
                         return { text, responseMode: 'CHAT' };

@@ -1,7 +1,14 @@
 import { PrismaClient } from '@prisma/client';
+import { redactAuditArgs } from '../utils/auditRedact';
 
-// Disable Node.js TLS rejection for OpenSSL 3 compatibility on Render/Linux
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+// NOTE: We deliberately do NOT set NODE_TLS_REJECT_UNAUTHORIZED='0' here.
+// Prisma's Rust query engine performs its own TLS handshake and honours the
+// `sslmode=no-verify` parameter injected by getFormattedDatabaseUrl() below —
+// it does not consult Node's TLS settings. Disabling Node TLS verification
+// process-wide would silently strip certificate validation from every OTHER
+// outbound connection (LLM providers, Telegram, FCM, web-push), which is a
+// far larger blast radius than the DB issue it was originally added for.
+// The underlying PgBouncer handshake failure is fixed by routing to port 5432.
 
 const globalForPrisma = global as unknown as { basePrisma: PrismaClient | undefined };
 
@@ -59,7 +66,7 @@ const prisma = basePrisma.$extends({
               operation: operation,
               recordId: (result as any)?.id?.toString() || (args as any)?.where?.id?.toString() || null,
               metadata: JSON.parse(JSON.stringify({
-                args: args,
+                args: redactAuditArgs(args),
                 timestamp: new Date().toISOString()
               }))
             }

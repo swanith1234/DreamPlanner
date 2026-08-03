@@ -5,6 +5,8 @@ import { logger } from '../../utils/logger';
 import { notificationWS } from './websocket.server';
 import { pushService } from './push.service';
 import { chatService } from '../chat/chat.service';
+import { mintActionToken } from './notificationAction.token';
+import { buildNativePushData } from './pushPayload';
 
 export interface NotificationData {
   notification: Notification;
@@ -135,17 +137,31 @@ export class NotificationDispatcher {
 
       const agentName = user.preferences?.agentName || `Future ${user.name || 'you'}`;
 
+      // Capability token: the Android BroadcastReceiver has no cookie jar, so this
+      // is what authenticates the action back to /api/notifications/action.
+      // Scoped to this one notification and this one user.
+      const actionToken = mintActionToken({
+        notificationId: notification.id,
+        userId: user.id,
+      });
+
+      // Payload shape lives in pushPayload.ts and is unit-tested there — this
+      // contract broke silently once (missing userId/taskId made every action
+      // button a no-op) and the failure was invisible from the server side.
       await pushService.sendPushNotification(user.id, {
         title: agentName,
         body: notification.message,
         icon: '/pwa-192x192.png',
         actions: metadata.pushActions || [],
-        data: {
-          url: task ? `/app/tasks/${task.id}` : '/app/home',
+        data: buildNativePushData({
           notificationId: notification.id,
+          userId: user.id,
+          actionToken,
+          taskId: task?.id,
+          checkpointId: notification.checkpointId,
           apiUrl: process.env.API_URL || 'http://localhost:3000',
-          apiPath: metadata.apiPath
-        }
+          apiPath: metadata.apiPath,
+        }),
       });
 
       return { success: true };

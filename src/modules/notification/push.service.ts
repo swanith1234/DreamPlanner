@@ -73,10 +73,15 @@ export class PushService {
                         // notification body silently dismissed the app instead of opening it.
                         // ────────────────────────────────────────────────────────────────
 
-                        // All data values MUST be strings for FCM
+                        // All data values MUST be strings for FCM.
+                        // Skip null/undefined rather than stringifying them — otherwise
+                        // an absent taskId arrives on the device as the literal
+                        // "undefined", which passes the receiver's non-empty checks and
+                        // gets POSTed back as a bogus id.
                         const stringData: Record<string, string> = {};
                         if (payload.data) {
                             for (const [key, val] of Object.entries(payload.data)) {
+                                if (val === null || val === undefined) continue;
                                 stringData[key] = String(val);
                             }
                         }
@@ -88,14 +93,19 @@ export class PushService {
                         stringData.tag      = stringData.notificationId || userId;
 
                         // Actions JSON — parsed by MyFirebaseMessagingService to build buttons
+                        // Android shows at most 3 notification actions, and the inline
+                        // Reply action already occupies one slot — so ship 2 progress
+                        // buttons, not 3, or the last one is silently dropped.
+                        //
+                        // Values are DELTAS applied to the active checkpoint.
+                        // "Complete" sends 100, which clamps to 100 and is therefore
+                        // safe to tap repeatedly.
                         if (payload.actions && payload.actions.length > 0) {
-                            stringData.actions = JSON.stringify(payload.actions);
+                            stringData.actions = JSON.stringify(payload.actions.slice(0, 2));
                         } else {
-                            // Default progress actions always included
                             stringData.actions = JSON.stringify([
-                                { label: '+25%',      actionType: 'PROGRESS', value: '25'   },
-                                { label: '+50%',      actionType: 'PROGRESS', value: '50'   },
-                                { label: 'Mark Done', actionType: 'PROGRESS', value: '100'  },
+                                { label: '+10%',     actionType: 'PROGRESS', value: '10'  },
+                                { label: 'Complete', actionType: 'PROGRESS', value: '100' },
                             ]);
                         }
 
