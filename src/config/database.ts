@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { redactAuditArgs } from '../utils/auditRedact';
+import { logDbDiagnostics } from './dbDiagnostics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LOAD-BEARING — DO NOT REMOVE WITHOUT DEPLOYING TO RENDER FIRST.
@@ -60,6 +61,12 @@ function getFormattedDatabaseUrl(): string {
 }
 
 const dbUrl = getFormattedDatabaseUrl();
+
+// Printed once at startup, before the first query. Prisma's TLS error names
+// neither the host it dialled nor the engine it loaded, so without this a
+// crash-looping container gives no way to tell a bad connection string from a
+// missing platform engine. Credentials are never included.
+logDbDiagnostics(dbUrl);
 
 const basePrisma =
   globalForPrisma.basePrisma ??
