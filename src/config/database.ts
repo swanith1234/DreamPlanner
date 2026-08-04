@@ -1,14 +1,35 @@
 import { PrismaClient } from '@prisma/client';
 import { redactAuditArgs } from '../utils/auditRedact';
 
-// NOTE: We deliberately do NOT set NODE_TLS_REJECT_UNAUTHORIZED='0' here.
-// Prisma's Rust query engine performs its own TLS handshake and honours the
-// `sslmode=no-verify` parameter injected by getFormattedDatabaseUrl() below —
-// it does not consult Node's TLS settings. Disabling Node TLS verification
-// process-wide would silently strip certificate validation from every OTHER
-// outbound connection (LLM providers, Telegram, FCM, web-push), which is a
-// far larger blast radius than the DB issue it was originally added for.
-// The underlying PgBouncer handshake failure is fixed by routing to port 5432.
+// ─────────────────────────────────────────────────────────────────────────────
+// LOAD-BEARING — DO NOT REMOVE WITHOUT DEPLOYING TO RENDER FIRST.
+//
+// Without this line the Render container cannot open a database connection:
+//
+//   prisma:error Invalid `prisma.$queryRaw()` invocation:
+//   Error opening a TLS connection: OpenSSL error
+//   ==> Exited with status 1
+//
+// It works locally regardless, because macOS resolves the Supabase certificate
+// chain that Render's Linux/OpenSSL 3 image rejects. So local success proves
+// nothing about this line — it must be validated on Render.
+//
+// It was removed once on the reasoning that Prisma's Rust engine does its own
+// TLS handshake and honours `sslmode=no-verify` from the connection string, and
+// therefore would not consult Node's TLS settings. That reasoning is wrong in
+// practice: the deploy crash-looped immediately. The later "route through direct
+// port 5432" fix is CUMULATIVE with this one, not a replacement for it.
+//
+// It must be set here rather than in index.ts: TypeScript hoists every require()
+// above other statements, so an assignment written at the top of index.ts runs
+// AFTER this module has already been loaded and the client constructed.
+//
+// KNOWN TRADE-OFF: this is process-wide, so it also disables certificate
+// verification for outbound LLM, Telegram, FCM and web-push calls. The correct
+// long-term fix is to pin Supabase's CA certificate and re-enable verification;
+// until that is validated on Render, this stays.
+// ─────────────────────────────────────────────────────────────────────────────
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const globalForPrisma = global as unknown as { basePrisma: PrismaClient | undefined };
 
