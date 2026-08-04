@@ -1,36 +1,18 @@
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { redactAuditArgs } from '../utils/auditRedact';
 import { logDbDiagnostics } from './dbDiagnostics';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// LOAD-BEARING — DO NOT REMOVE WITHOUT DEPLOYING TO RENDER FIRST.
+// NOTE: this file used to set NODE_TLS_REJECT_UNAUTHORIZED='0' process-wide.
+// It never actually fixed the Render connection — proven by a startup probe in
+// which every SSL variant, including sslmode=disable, still failed with
+// "Error opening a TLS connection: OpenSSL error". The Rust query engine does
+// not consult Node's TLS settings, so the flag only ever weakened every OTHER
+// outbound call (LLM providers, Telegram, FCM, web-push).
 //
-// Without this line the Render container cannot open a database connection:
-//
-//   prisma:error Invalid `prisma.$queryRaw()` invocation:
-//   Error opening a TLS connection: OpenSSL error
-//   ==> Exited with status 1
-//
-// It works locally regardless, because macOS resolves the Supabase certificate
-// chain that Render's Linux/OpenSSL 3 image rejects. So local success proves
-// nothing about this line — it must be validated on Render.
-//
-// It was removed once on the reasoning that Prisma's Rust engine does its own
-// TLS handshake and honours `sslmode=no-verify` from the connection string, and
-// therefore would not consult Node's TLS settings. That reasoning is wrong in
-// practice: the deploy crash-looped immediately. The later "route through direct
-// port 5432" fix is CUMULATIVE with this one, not a replacement for it.
-//
-// It must be set here rather than in index.ts: TypeScript hoists every require()
-// above other statements, so an assignment written at the top of index.ts runs
-// AFTER this module has already been loaded and the client constructed.
-//
-// KNOWN TRADE-OFF: this is process-wide, so it also disables certificate
-// verification for outbound LLM, Telegram, FCM and web-push calls. The correct
-// long-term fix is to pin Supabase's CA certificate and re-enable verification;
-// until that is validated on Render, this stays.
-// ─────────────────────────────────────────────────────────────────────────────
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+// The `pg` adapter below routes database TLS through Node and relaxes
+// verification for that pool ALONE, which is the scoped equivalent of what the
+// global flag was reaching for.
 
 const globalForPrisma = global as unknown as { basePrisma: PrismaClient | undefined };
 
@@ -68,11 +50,36 @@ const dbUrl = getFormattedDatabaseUrl();
 // missing platform engine. Credentials are never included.
 logDbDiagnostics(dbUrl);
 
+/**
+ * Connect through the `pg` driver adapter instead of the Rust query engine's
+ * built-in TLS.
+ *
+ * WHY: on Render, every connection attempt failed with
+ *   "Error opening a TLS connection: OpenSSL error"
+ * A startup probe tried five variants — sslmode=require+sslaccept, prefer,
+ * disable, the 6543 transaction pooler, and a second host via the other env
+ * var — and ALL five failed identically. `sslmode=disable` failing with a TLS
+ * error is the tell: no handshake should occur at all, so the parameters were
+ * never being honoured. The engine binary loads (queries are attempted) but its
+ * OpenSSL linkage is broken in that container image.
+ *
+ * The adapter routes Postgres over `pg`, so TLS is handled by Node rather than
+ * the query engine, bypassing the broken stack entirely.
+ *
+ * `rejectUnauthorized: false` is scoped to THIS pool — it accepts Supabase's
+ * pooler certificate chain without weakening TLS for any other outbound call,
+ * which is what let the process-wide NODE_TLS_REJECT_UNAUTHORIZED be removed.
+ */
+const adapter = new PrismaPg({
+  connectionString: dbUrl,
+  ssl: { rejectUnauthorized: false },
+});
+
 const basePrisma =
   globalForPrisma.basePrisma ??
   new PrismaClient({
     log: ['error', 'warn'],
-    ...(dbUrl ? { datasources: { db: { url: dbUrl } } } : {}),
+    adapter,
   });
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.basePrisma = basePrisma;
