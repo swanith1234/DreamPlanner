@@ -258,7 +258,8 @@ describe('notification action — idempotency', () => {
 // ─── Validation ──────────────────────────────────────────────────────────────
 
 describe('notification action — validation', () => {
-    it.each([[-5], [150], ['abc'], [null]])('rejects invalid progress value %s', async (value) => {
+    const invalidValues: unknown[] = [-5, 150, 'abc', null];
+    it.each(invalidValues)('rejects invalid progress value %s', async (value: unknown) => {
         const res = await call({
             notificationId: NOTIF_ID, actionToken: validToken, type: 'PROGRESS', value,
         });

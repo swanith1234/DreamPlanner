@@ -1,0 +1,12 @@
+{
+  // Type checks the test suite, which the production tsconfig deliberately
+  // excludes (Render prunes devDependencies, so `vitest` is not resolvable there).
+  // Run with: npm run type-check:test
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

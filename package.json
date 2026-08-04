@@ -15,7 +15,9 @@
     "prisma:studio": "prisma studio",
     "prisma:seed": "ts-node prisma/seed.ts",
     "lint": "eslint src --ext .ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "type-check:test": "tsc --noEmit -p tsconfig.test.json",
+    "verify": "npm run type-check && npm run type-check:test && npm run test"
   },
   "keywords": [],
   "author": "",
