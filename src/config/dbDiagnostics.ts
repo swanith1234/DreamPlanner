@@ -64,6 +64,100 @@ function listEngines(): { engines: string[]; expectedEnginePresent: boolean } {
     return { engines: ['(client directory not found)'], expectedEnginePresent: false };
 }
 
+// ─── Connection variant probe ────────────────────────────────────────────────
+
+/**
+ * Candidate connection strings to try when the primary one fails.
+ *
+ * The container that is currently serving production connects fine with the
+ * SAME connection string that a freshly built container cannot use, which
+ * isolates the fault to the runtime image rather than the URL or the database.
+ * Since that is not reproducible off-Render, this enumerates the plausible
+ * variants and reports which (if any) succeed there.
+ *
+ * `sslmode=no-verify` is a libpq spelling; Prisma's documented way to accept a
+ * certificate it cannot validate is `sslaccept=accept_invalid_certs`. Both are
+ * tried, along with the transaction pooler on 6543.
+ */
+export function buildConnectionVariants(primary: string): Array<{ label: string; url: string }> {
+    const variants: Array<{ label: string; url: string }> = [];
+    const push = (label: string, mutate: (u: URL) => void) => {
+        try {
+            const u = new URL(primary);
+            mutate(u);
+            variants.push({ label, url: u.toString() });
+        } catch {
+            /* unparseable primary — nothing to vary */
+        }
+    };
+
+    push('sslmode=require + sslaccept=accept_invalid_certs', (u) => {
+        u.searchParams.set('sslmode', 'require');
+        u.searchParams.set('sslaccept', 'accept_invalid_certs');
+    });
+    push('sslmode=prefer', (u) => {
+        u.searchParams.delete('sslaccept');
+        u.searchParams.set('sslmode', 'prefer');
+    });
+    push('sslmode=disable', (u) => {
+        u.searchParams.delete('sslaccept');
+        u.searchParams.set('sslmode', 'disable');
+    });
+    push('port 6543 (transaction pooler) + pgbouncer', (u) => {
+        u.port = '6543';
+        u.searchParams.set('pgbouncer', 'true');
+    });
+
+    // The alternate env var, untouched, in case only one of the two is stale.
+    const alt = process.env.DIRECT_URL ? process.env.DATABASE_URL : process.env.DIRECT_URL;
+    if (alt && alt !== primary) {
+        variants.push({ label: 'the other env var, as configured', url: alt });
+    }
+
+    return variants;
+}
+
+/**
+ * Try each variant with a trivial query and report the outcome.
+ *
+ * Diagnostic only — deliberately does NOT rewire the exported client. Swapping
+ * the live singleton would mean silently running production against a connection
+ * nobody chose; naming the working variant lets that be a deliberate one-line
+ * change instead.
+ */
+export async function probeConnectionVariants(primary: string): Promise<void> {
+    const variants = buildConnectionVariants(primary);
+    if (variants.length === 0) return;
+
+    // Imported lazily so this file stays cheap for the normal startup path.
+    const { PrismaClient } = await import('@prisma/client');
+
+    console.error('[db-probe] primary connection failed — testing alternatives:');
+
+    let anyWorked = false;
+    for (const { label, url } of variants) {
+        const client = new PrismaClient({ datasources: { db: { url } }, log: [] });
+        try {
+            await client.$queryRaw`SELECT 1`;
+            console.error(`[db-probe]   ✅ WORKS  → ${label}`);
+            anyWorked = true;
+        } catch (err: any) {
+            const msg = String(err?.message ?? '').split('\n').filter(Boolean).pop() ?? 'unknown error';
+            console.error(`[db-probe]   ❌ fails  → ${label}  (${msg.slice(0, 90)})`);
+        } finally {
+            await client.$disconnect().catch(() => { /* ignore */ });
+        }
+    }
+
+    console.error(
+        anyWorked
+            ? '[db-probe] At least one variant connects. Apply that form to getFormattedDatabaseUrl().'
+            : '[db-probe] No variant connects. The fault is not the SSL parameters — likely the ' +
+              'Rust engine TLS stack in this image. Next step is the `pg` driver adapter, which ' +
+              'routes Postgres TLS through Node instead of the query engine.'
+    );
+}
+
 export function collectDbDiagnostics(resolvedUrl: string): DbDiagnostics {
     const source: DbDiagnostics['source'] =
         process.env.DIRECT_URL ? 'DIRECT_URL' :

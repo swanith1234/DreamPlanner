@@ -1,5 +1,6 @@
 import { env } from './config/env';
-import prisma from './config/database';
+import prisma, { resolvedDatabaseUrl } from './config/database';
+import { probeConnectionVariants } from './config/dbDiagnostics';
 import { logger } from './utils/logger';
 import { createApp } from './app';
 import { notificationWS } from './modules/notification/websocket.server';
@@ -25,6 +26,16 @@ async function start() {
 
   } catch (error: any) {
     console.error('Failed to start server:', error.message);
+
+    // The primary connection failed. Before exiting, find out WHICH connection
+    // forms do work from inside this container — otherwise every hypothesis
+    // costs a full deploy to test. Never allowed to mask the original failure.
+    if (/TLS|OpenSSL|connect|database/i.test(String(error?.message ?? ''))) {
+      await probeConnectionVariants(resolvedDatabaseUrl).catch((probeErr: any) => {
+        console.error('[db-probe] probe itself failed:', probeErr?.message);
+      });
+    }
+
     await logger.error('server', 'Failed to start server', {
       error: error.message,
     });

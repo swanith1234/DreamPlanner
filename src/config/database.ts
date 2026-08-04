@@ -111,3 +111,11 @@ const prisma = basePrisma.$extends({
 
 export default prisma;
 export { basePrisma };
+
+/**
+ * The connection string actually handed to Prisma, after port rewriting and
+ * sslmode normalisation. Exported so startup diagnostics can probe variants of
+ * the real URL rather than re-deriving it and testing something different.
+ * Contains credentials — never log it directly.
+ */
+export const resolvedDatabaseUrl = dbUrl;
