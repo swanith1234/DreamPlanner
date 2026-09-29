@@ -38,6 +38,7 @@ import { toolLabel, toolLabelPast, isDestructiveTool } from './toolGuards';
 import { stripInternalKeys } from './resolution';
 import { notificationWS } from '../modules/notification/websocket.server';
 import { pushService } from '../modules/notification/push.service';
+import { hindsightService } from './hindsightService';
 
 export interface ChatResponse {
     text: string;
@@ -202,7 +203,7 @@ export const orchestrator = {
         const history = await chatService.getConversationWindow(userId, 10);
         await chatService.saveMessage(userId, 'user', message);
 
-        // 2. Context
+        // 2. Context & Hindsight Memory
         let contextBlock = '';
         let motivationTone = 'EMPATHETIC';
         let name = 'Friend';
@@ -218,7 +219,25 @@ export const orchestrator = {
             await logger.warn('orchestrator', 'Context build failed', { err: err.message });
         }
 
-        let systemPrompt = buildSystemPrompt(contextBlock, motivationTone, name);
+        // Retain user preference/persona statements in Hindsight Memory Engine
+        if (/goggins|ronaldo|cr7|mentality|prefer|habit|like|talk to me|speak to me|persona|tone/i.test(message)) {
+            await hindsightService.retain({
+                userId,
+                eventType: 'USER_PREFERENCE',
+                content: `User tone / persona preference: "${message}"`,
+            });
+        }
+
+        // Recall memories for this turn from Hindsight Engine
+        const memories = await hindsightService.recall({ userId, query: message, topK: 3 });
+        let memoryBlock = '';
+        if (memories.length > 0) {
+            memoryBlock = '\n\n=== RECALLED USER MEMORIES & PREFERENCES (HINDSIGHT) ===\n' +
+                memories.map(m => `• [${m.eventType}] ${m.content}`).join('\n') +
+                '\nIMPORTANT: Adhere strictly to the above remembered user preferences, persona (e.g. David Goggins / CR7 relentless tone), and schedule habits.';
+        }
+
+        let systemPrompt = buildSystemPrompt(contextBlock, motivationTone, name) + memoryBlock;
 
         // ─────────────────────────────────────────────────────────────────────
         // 3. Resume an in-flight action session
