@@ -1,4 +1,5 @@
 import { executeWithFallback } from '../../ai/llmClient';
+import { safeJsonParse } from '../../ai/jsonParse';
 import { logger } from '../../utils/logger';
 
 export type GeneratedAssessment = {
@@ -61,7 +62,7 @@ COMPLETION_CRITERIA_JSON: ${JSON.stringify(completionCriteria)}
 
   let parsed: any = {};
   try {
-    parsed = JSON.parse(raw);
+    parsed = safeJsonParse(raw, {});
   } catch {
     parsed = {};
   }

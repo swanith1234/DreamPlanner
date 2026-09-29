@@ -1,4 +1,5 @@
-import { groq, GROQ_MODEL } from '../../config/ai';
+import { callLLM } from '../../ai/llmClient';
+import { safeJsonParse } from '../../ai/jsonParse';
 import { logger } from '../../utils/logger';
 import { MotivationTone, InsightType, UserInsightSnapshot } from '@prisma/client';
 
@@ -55,17 +56,14 @@ export async function generateWeeklyInsight(input: WeeklyInsightInput): Promise<
         }
         `;
 
-        const response = await groq.chat.completions.create({
-            model: GROQ_MODEL,
-            messages: [{ role: 'user', content: prompt }],
+        const content = await callLLM([{ role: 'user', content: prompt }], {
             temperature: 0.7,
-            response_format: { type: 'json_object' }
+            jsonMode: true,
         });
 
-        const content = response.choices[0]?.message?.content;
         if (!content) throw new Error('No content from LLM');
 
-        const result = JSON.parse(content);
+        const result = safeJsonParse(content);
 
         return {
             insightType: result.insightType as InsightType || InsightType.WEEKLY_VERDICT,
@@ -122,16 +120,13 @@ Return STRICT JSON:
 }
 `;
 
-        const response = await groq.chat.completions.create({
-            model: GROQ_MODEL,
-            messages: [{ role: 'user', content: prompt }],
+        const content = await callLLM([{ role: 'user', content: prompt }], {
             temperature: 0.6,
-            response_format: { type: 'json_object' }
+            jsonMode: true,
         });
 
-        const content = response.choices[0]?.message?.content;
         if (!content) throw new Error('No content from LLM');
-        const result = JSON.parse(content);
+        const result = safeJsonParse(content);
 
         return {
             insightType: InsightType.NEXT_SPRINT_PLAN,
