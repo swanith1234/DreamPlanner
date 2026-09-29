@@ -41,22 +41,22 @@ export class PushController {
 
     async unsubscribe(req: Request, res: Response) {
         try {
+            // @ts-ignore
+            const userId = req.userId;
             const { endpoint } = req.body;
             if (!endpoint) {
                 return res.status(400).json({ error: 'Endpoint required' });
             }
 
-            await prisma.pushSubscription.delete({
-                where: { endpoint }
+            // Scope the delete to the caller. Deleting by `endpoint` alone let any
+            // authenticated user silently disable another user's push delivery.
+            await prisma.pushSubscription.deleteMany({
+                where: { endpoint, userId }
             });
 
-            await logger.info('notification', 'Push subscription removed', {}, req.body?.endpoint);
+            await logger.info('notification', 'Push subscription removed', {}, userId);
             res.json({ success: true });
         } catch (error: any) {
-            // If record not found, it's already unsubscribed, so success
-            if (error.code === 'P2025') {
-                return res.json({ success: true });
-            }
             await logger.error('notification', 'Failed to unsubscribe push', { error: error.message });
             res.status(500).json({ error: error.message });
         }
@@ -64,13 +64,17 @@ export class PushController {
 
     async checkSubscription(req: Request, res: Response) {
         try {
+            // @ts-ignore
+            const userId = req.userId;
             const { endpoint } = req.body;
             if (!endpoint) {
                 return res.json({ subscribed: false });
             }
 
-            const subscription = await prisma.pushSubscription.findUnique({
-                where: { endpoint }
+            // Scoped to the caller so this cannot be used to probe whether an
+            // arbitrary endpoint/FCM token is registered to someone else.
+            const subscription = await prisma.pushSubscription.findFirst({
+                where: { endpoint, userId }
             });
 
             res.json({ subscribed: !!subscription });

@@ -1,4 +1,5 @@
-import { groq, GROQ_MODEL } from '../../config/ai';
+import { callLLM } from '../../ai/llmClient';
+import { safeJsonParse } from '../../ai/jsonParse';
 import { DreamValidationResponse } from '../../types';
 import { logger } from '../../utils/logger';
 import { z } from 'zod';
@@ -54,15 +55,12 @@ Respond ONLY with valid JSON (no markdown, no code blocks):
   ]
 }`;
 
-      const response = await groq.chat.completions.create({
-        model: GROQ_MODEL,
-        messages: [{ role: 'user', content: prompt }],
+      const content = await callLLM([{ role: 'user', content: prompt }], {
         temperature: 0.7,
         max_tokens: 800,
       });
 
-      const content = response.choices[0]?.message?.content || '{}';
-      const parsed = JSON.parse(content);
+      const parsed = safeJsonParse(content, {});
       const validated = DreamValidationZodSchema.parse(parsed);
 
       return {

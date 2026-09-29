@@ -1,6 +1,6 @@
-
 // src/modules/task/task.validator.ts
-import { groq, GROQ_MODEL } from '../../config/ai';
+import { callLLM } from '../../ai/llmClient';
+import { safeJsonParse } from '../../ai/jsonParse';
 import { logger } from '../../utils/logger';
 
 export class TaskValidator {
@@ -25,15 +25,12 @@ Is this task clearly aligned with the dream? Respond ONLY with JSON:
   "feedback": "explanation"
 }`;
 
-      const response = await groq.chat.completions.create({
-        model: GROQ_MODEL,
-        messages: [{ role: 'user', content: prompt }],
+      const content = await callLLM([{ role: 'user', content: prompt }], {
         temperature: 0.5,
         max_tokens: 200,
       });
 
-      const content = response.choices[0]?.message?.content || '{}';
-      const parsed = JSON.parse(content);
+      const parsed = safeJsonParse<any>(content, {});
 
       return {
         isValid: parsed.isValid !== false,

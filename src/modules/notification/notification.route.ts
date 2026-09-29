@@ -11,7 +11,8 @@ const router = Router();
 
 // ─── Public Routes (no auth required) ────────────────────────────────────────
 
-// External cron trigger (Render cron job hits this every minute)
+// External cron trigger (free third-party cron worker hits this on a timer).
+// Intentionally unauthenticated — the chosen provider cannot send custom headers.
 router.post('/cron/trigger', async (req, res) => {
   try {
     const result = await runNotificationCron();

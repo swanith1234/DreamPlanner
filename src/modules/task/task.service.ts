@@ -23,6 +23,23 @@ export class TaskService {
     );
   }
 
+  /**
+   * The checkpoint a progress update should land on: the lowest-orderIndex
+   * checkpoint that is not yet complete.
+   *
+   * Exposed because notification action buttons need the same target the chat
+   * agent and the web UI use — `updateCheckpointProgress` rejects anything else
+   * ("Only the first incomplete checkpoint can be updated"), so all three callers
+   * must agree on what "active" means.
+   *
+   * Returns null when the task has no checkpoints, or when all are complete.
+   * Ownership is enforced by getTask().
+   */
+  async getActiveCheckpointForTask(taskId: string, userId: string): Promise<any | null> {
+    const task = await this.getTask(taskId, userId);
+    return this.getActiveCheckpoint(task.checkpoints ?? []);
+  }
+
   async createTask(userId: string, input: CreateTaskRequest): Promise<any> {
     // Verify dream exists and belongs to user
     const dream = await prisma.dream.findUnique({ where: { id: input.dreamId } });

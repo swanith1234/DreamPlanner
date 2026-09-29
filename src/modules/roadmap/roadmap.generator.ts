@@ -1,5 +1,6 @@
 import { RoadmapNodeStatus } from '@prisma/client';
 import { executeWithFallback } from '../../ai/llmClient';
+import { safeJsonParse } from '../../ai/jsonParse';
 import prisma from '../../config/database';
 import { logger } from '../../utils/logger';
 import type { RoadmapDraftPayload } from './roadmap.dto';
@@ -109,7 +110,7 @@ Generate the roadmap.`;
 
   let validated: z.infer<typeof RoadmapGenerationZodSchema>;
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, {});
     validated = RoadmapGenerationZodSchema.parse(parsed);
   } catch (error: any) {
     await logger.error('roadmap', `JSON Parse or Zod Validation Failed. Raw length: ${raw.length}`, { error: error.message });

@@ -560,8 +560,9 @@ model TaskCheckpoint {
   completedAt  DateTime?
   isUserEdited Boolean   @default(false)
 
-  task Task  @relation(fields: [taskId], references: [id])
-  days Day[]
+  task          Task           @relation(fields: [taskId], references: [id])
+  days          Day[]
+  notifications Notification[]
 
   createdAt DateTime @default(now())
 
@@ -608,10 +609,13 @@ model UserEvent {
 ///////////////////////
 
 model Notification {
-  id      String  @id @default(uuid())
-  userId  String
-  dreamId String?
-  taskId  String?
+  id           String  @id @default(uuid())
+  userId       String
+  dreamId      String?
+  taskId       String?
+  // Exact checkpoint this reminder targets. Notification action buttons operate on
+  // a single checkpoint; without this the handler had to guess from the task.
+  checkpointId String?
 
   type        NotificationType
   message     String
@@ -624,11 +628,39 @@ model Notification {
   retryCount    Int     @default(0)
   failureReason String?
 
-  user  User   @relation(fields: [userId], references: [id])
-  dream Dream? @relation(fields: [dreamId], references: [id])
-  task  Task?  @relation(fields: [taskId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+  dream      Dream?          @relation(fields: [dreamId], references: [id])
+  task       Task?           @relation(fields: [taskId], references: [id])
+  checkpoint TaskCheckpoint? @relation(fields: [checkpointId], references: [id])
+
+  actions NotificationAction[]
 
   createdAt DateTime @default(now())
+}
+
+/// Idempotency ledger for mutations triggered from a notification action button.
+///
+/// Android fires these from a BroadcastReceiver with no retry visibility, and the
+/// OS may replay a PendingIntent. Without this, a retried "+10%" silently becomes
+/// "+20%". The receiver mints one `idempotencyKey` per user tap; a replay of the
+/// same key returns the original outcome instead of re-applying the delta.
+model NotificationAction {
+  id             String  @id @default(uuid())
+  idempotencyKey String  @unique
+  notificationId String
+  userId         String
+  actionType     String // 'PROGRESS' | 'REPLY'
+  /// Applied delta / payload size, for auditing and for replaying the response.
+  value          Int?
+  /// Resulting checkpoint progress after the mutation (null for REPLY).
+  resultProgress Int?
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([notificationId])
+  @@index([userId, createdAt])
 }
 
 ///////////////////////

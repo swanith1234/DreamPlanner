@@ -2,6 +2,7 @@
 import { logger } from '../../utils/logger';
 import { NotificationType, MotivationTone } from '@prisma/client';
 import { buildNotificationPrompt } from '../../utils/notificationPromptBuilder';
+import { callLLM } from '../../ai/llmClient';
 
 export interface MessageGenerationInput {
   notificationType: string;
@@ -17,24 +18,8 @@ export interface MessageGenerationInput {
   statusEvaluation: any; // dynamically filled based on caseType
 }
 
-import { 
-  groq, GROQ_MODEL, 
-  sambanova, SAMBANOVA_MODEL, 
-  cerebras, CEREBRAS_MODEL, 
-  deepseek, DEEPSEEK_MODEL, 
-  openRouter, OPENROUTER_CHEAP_MODEL 
-} from '../../config/ai';
-
-const LLM_FALLBACK_CHAIN = [
-  { name: 'Groq', client: groq, model: GROQ_MODEL },
-  { name: 'DeepSeek', client: deepseek, model: DEEPSEEK_MODEL },
-  { name: 'SambaNova', client: sambanova, model: SAMBANOVA_MODEL },
-  { name: 'Cerebras', client: cerebras, model: CEREBRAS_MODEL },
-  { name: 'OpenRouter', client: openRouter, model: OPENROUTER_CHEAP_MODEL },
-];
-
 /**
- * Generate personalized notification messages using a multi-provider fallback chain
+ * Generate personalized notification messages using OpenRouter via callLLM
  */
 export async function generateNotificationMessageWithLLM(
   input: MessageGenerationInput
@@ -86,49 +71,17 @@ Crucial Formatting MUST FOLLOW:
   const systemPrompt = buildNotificationPrompt(userTone, baseContext);
 
   let generatedMessage = '';
-  let lastError = null;
 
-  // ── FALLBACK CHAIN EXECUTION ─────────────────────────────────────────────
-  for (const provider of LLM_FALLBACK_CHAIN) {
-    try {
-      const response = await provider.client.chat.completions.create({
-        model: provider.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 150,
-      });
-
-      generatedMessage = response.choices[0]?.message?.content?.trim() || '';
-      
-      if (generatedMessage) {
-        await logger.info('llm', `Message generated successfully via ${provider.name}`, {
-          caseType,
-          model: provider.model
-        });
-        break; // Success!
-      }
-    } catch (error: any) {
-      lastError = error;
-      const isRateLimit = error.status === 429 || error.message?.toLowerCase().includes('rate limit') || error.message?.toLowerCase().includes('token limit');
-      
-      await logger.warn('llm', `Provider ${provider.name} failed`, {
-        error: error.message,
-        isRateLimit,
-        nextProvider: LLM_FALLBACK_CHAIN[LLM_FALLBACK_CHAIN.indexOf(provider) + 1]?.name || 'None'
-      });
-
-      if (!isRateLimit && error.status !== 500 && error.status !== 503) {
-        // If it's a prompt error (400) or auth error (401), we might want to stop, 
-        // but for notifications, we try to be resilient and move to the next provider anyway.
-      }
-    }
+  try {
+    generatedMessage = await callLLM([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ], { temperature: 0.7, max_tokens: 512 });
+  } catch (error: any) {
+    logger.warn('notification-llm', 'LLM notification generation failed', { error: error.message });
   }
 
   if (!generatedMessage) {
-    await logger.error('llm', 'All providers in fallback chain failed', { error: lastError?.message });
     return { message: getDefaultMessage(input.notificationType as any) };
   }
 

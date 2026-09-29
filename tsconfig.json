@@ -15,5 +15,10 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules"]
+  // Test files must NOT be part of the production build. `npm run build` runs on
+  // Render with devDependencies pruned, so `vitest` is absent there and compiling
+  // *.test.ts fails with TS2307 ("Cannot find module 'vitest'"). Tests are type
+  // checked separately via tsconfig.test.json (npm run type-check:test) and are
+  // executed by vitest, which does its own transpilation.
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
 }

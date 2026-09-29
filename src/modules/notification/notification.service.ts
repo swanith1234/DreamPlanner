@@ -18,7 +18,8 @@ export class NotificationService {
     userId: string,
     dreamId: string | null,
     taskId: string | null,
-    notification: ScheduledNotification
+    notification: ScheduledNotification,
+    checkpointId: string | null = null
   ): Promise<any> {
     try {
       const created = await prisma.notification.create({
@@ -26,6 +27,11 @@ export class NotificationService {
           userId,
           dreamId,
           taskId,
+          // Binds the reminder to one exact checkpoint so the action button and the
+          // deep link both target it. When null, the action handler falls back to
+          // the task's active checkpoint at tap time — which is often MORE correct,
+          // since the active checkpoint can advance between scheduling and delivery.
+          checkpointId,
           type: notification.type,
           message: notification.message,
           scheduledAt: notification.scheduledAt,
@@ -410,12 +416,16 @@ export class NotificationService {
             metadata: {
               taskId: task.id,
               progress: task.progressPercent || 0,
-              actions: [
-                { label: 'Update Progress', action: 'UPDATE_PROGRESS', value: 'slider' },
-                { label: 'Skip for today', action: 'SKIP_TODAY' }
+              // Shape must match what MyFirebaseMessagingService parses:
+              // { label, actionType, value }. The previous { label, action, value }
+              // threw inside the JSON parse, so the notification rendered with no
+              // buttons at all. Values are DELTAS applied to the active checkpoint.
+              pushActions: [
+                { label: '+10%',     actionType: 'PROGRESS', value: '10' },
+                { label: 'Complete', actionType: 'PROGRESS', value: '100' }
               ]
             }
-          });
+          }, dueCheckpoint.id);
 
           // Only send ONE progress check per evening (even if multiple tasks)
           // to avoid spamming.
@@ -439,6 +449,13 @@ export class NotificationService {
         include: {
           user: {
             include: { preferences: true }
+          },
+          // The dispatcher reads `task` to build the deep link and to put `taskId`
+          // in the FCM payload. Without this include it was always undefined, so
+          // every notification deep-linked to /app/home and every action button
+          // resolved to "this reminder is not linked to a task".
+          task: {
+            include: { checkpoints: { orderBy: { orderIndex: 'asc' } } }
           },
           dream: {
             include: {
@@ -538,12 +555,49 @@ export class NotificationService {
             const timeRemainingInDay = Math.floor((endOfDay.getTime() - now.getTime()) / (1000 * 60 * 60));
             const todaysCheckpoints = activeTasks.flatMap(t => t.checkpoints).map(c => c.title);
             const progressMadeToday = activeTasks.map(t => `${t.title} (${t.progressPercent || 0}% done)`).join(', ');
-            
+
             llmInputPayload.statusEvaluation = {
               progressMadeToday,
               timeRemainingInDay,
               todaysCheckpoints
             };
+
+            // ── Bind this reminder to a concrete task + checkpoint ──────────────
+            // Recurring dream reminders are created via scheduleNextDreamReminder()
+            // with taskId = null, so without this the action buttons had nothing to
+            // act on ("this reminder is not linked to a task").
+            //
+            // Done at DISPATCH time rather than schedule time on purpose: the active
+            // checkpoint can advance between when a reminder is queued and when it
+            // is delivered, and the buttons must target what is actually next now.
+            if (!notification.taskId && activeTasks.length > 0) {
+              const targetTask = [...activeTasks].sort((a: any, b: any) => {
+                const da = a.deadline ? new Date(a.deadline).getTime() : Number.MAX_SAFE_INTEGER;
+                const db = b.deadline ? new Date(b.deadline).getTime() : Number.MAX_SAFE_INTEGER;
+                if (da !== db) return da - db;                    // soonest deadline first
+                return (b.priority ?? 0) - (a.priority ?? 0);      // then highest priority
+              })[0];
+
+              const activeCheckpoint = (targetTask.checkpoints ?? [])
+                .filter((c: any) => !c.isCompleted)
+                .sort((a: any, b: any) => a.orderIndex - b.orderIndex)[0];
+
+              notification.taskId = targetTask.id;
+              notification.checkpointId = activeCheckpoint?.id ?? null;
+              // dispatcher reads `task` to build the deep link
+              (notification as any).task = targetTask;
+
+              await prisma.notification.update({
+                where: { id: notificationId },
+                data: { taskId: targetTask.id, checkpointId: activeCheckpoint?.id ?? null },
+              });
+
+              await logger.info('notification', 'Bound reminder to active task/checkpoint', {
+                notificationId,
+                taskId: targetTask.id,
+                checkpointId: activeCheckpoint?.id ?? null,
+              }, notification.userId);
+            }
           } else {
             // Case 2: Next Step Proposal
             const completedTasksRecords = await prisma.task.findMany({
