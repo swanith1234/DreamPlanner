@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "611935168697",
+    "project_id": "ignitemate-4bd1e",
+    "storage_bucket": "ignitemate-4bd1e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:611935168697:android:8e124ffd6d13b9c100d368",
+        "android_client_info": {
+          "package_name": "com.ignitemate.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCz263rKMwEwxm0KBGIeFYh_4KAZijXStA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

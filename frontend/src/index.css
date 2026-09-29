@@ -1,0 +1,180 @@
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@layer utilities {
+  .glow-cyan {
+    box-shadow: 0 0 15px hsla(187, 92%, 53%, 0.5), 0 0 30px hsla(187, 92%, 53%, 0.15);
+  }
+
+  .glow-cyan-pulse {
+    animation: cyan-pulse 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .grid-blueprint {
+    background-color: #020617;
+    background-image: 
+      linear-gradient(rgba(56, 189, 248, 0.2) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56, 189, 248, 0.2) 1px, transparent 1px);
+    background-size: 50px 50px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .grid-blueprint::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 50%, transparent 20%, rgba(2, 6, 23, 0.8) 100%);
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  .perspective-container {
+    perspective: 1000px;
+    transform-style: preserve-3d;
+  }
+
+  .blueprint-surface {
+    transform: rotateX(15deg) translateY(-20px);
+    transform-origin: top;
+  }
+
+  .glass-panel {
+    background: rgba(15, 23, 42, 0.8);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    box-shadow: 
+      0 4px 6px -1px rgba(0, 0, 0, 0.1),
+      0 2px 4px -1px rgba(0, 0, 0, 0.06),
+      inset 0 0 20px rgba(56, 189, 248, 0.05);
+  }
+
+  .node-active {
+    border-color: rgba(34, 211, 238, 0.8);
+    box-shadow: 
+      0 0 20px rgba(34, 211, 238, 0.3),
+      inset 0 0 15px rgba(34, 211, 238, 0.1);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.3);
+    border-radius: 10px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(56, 189, 248, 0.3);
+    border-radius: 10px;
+    border: 1px solid rgba(56, 189, 248, 0.1);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(56, 189, 248, 0.5);
+  }
+}
+
+@keyframes cyan-pulse {
+  0%, 100% {
+    box-shadow: 0 0 15px hsla(187, 92%, 53%, 0.5), 0 0 30px hsla(187, 92%, 53%, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 25px hsla(187, 92%, 53%, 0.7), 0 0 50px hsla(187, 92%, 53%, 0.25);
+  }
+}
+
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+}
+a:hover {
+  color: #535bf2;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
+
+/* ══════════════════════════════════════════════
+   ROADMAP — Mobile Responsive Overrides
+   ══════════════════════════════════════════════ */
+@media (max-width: 767px) {
+  /* Hide the desktop page header — mobile view has its own sticky HUD */
+  .roadmap-page-header > div:first-child {
+    display: none !important;
+  }
+  /* Remove page padding on mobile — full-screen immersive experience */
+  .roadmap-page-header {
+    padding: 0 !important;
+    max-width: 100% !important;
+  }
+  /* Touch-action for React Flow pan/pinch */
+  .react-flow__pane {
+    touch-action: none !important;
+  }
+}
+
+/* Prevent body scroll when mobile modal is open */
+body.modal-open {
+  overflow: hidden;
+}

@@ -1,0 +1,37 @@
+:root {
+    /* Colors */
+    --color-bg-primary: #050510;
+    --color-bg-secondary: #101025;
+    --color-accent: #00f2ea;
+    --color-accent-rgb: 0, 242, 234;
+    --color-accent-glow: rgba(0, 242, 234, 0.4);
+    --color-gold: #ffd700;
+    --color-text-primary: #ffffff;
+    --color-text-secondary: rgba(255, 255, 255, 0.7);
+    --color-danger: #ff4d4d;
+    --color-success: #00e676;
+
+    /* Fonts */
+    --font-heading: 'Outfit', sans-serif;
+    --font-body: 'Inter', sans-serif;
+
+    /* Spacing */
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+    --spacing-2xl: 48px;
+
+    /* Border Radius */
+    --radius-sm: 8px;
+    --radius-md: 16px;
+    --radius-lg: 24px;
+    --radius-full: 9999px;
+
+    /* Effects */
+    --glass-bg: rgba(16, 16, 37, 0.6);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-blur: blur(12px);
+    --shadow-glow: 0 0 20px var(--color-accent-glow);
+}

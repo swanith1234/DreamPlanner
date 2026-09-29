@@ -1,0 +1,21 @@
+ext {
+    minSdkVersion = 24
+    compileSdkVersion = 36
+    targetSdkVersion = 36
+    androidxActivityVersion = '1.11.0'
+    androidxAppCompatVersion = '1.7.1'
+    androidxCoordinatorLayoutVersion = '1.3.0'
+    androidxCoreVersion = '1.17.0'
+    androidxFragmentVersion = '1.8.9'
+    coreSplashScreenVersion = '1.2.0'
+    androidxWebkitVersion = '1.14.0'
+    junitVersion = '4.13.2'
+    androidxJunitVersion = '1.3.0'
+    androidxEspressoCoreVersion = '3.7.0'
+    cordovaAndroidVersion = '14.0.1'
+    // Pinned here so :app and :capacitor-push-notifications resolve the SAME
+    // firebase-messaging. The plugin falls back to this exact version when the
+    // property is absent (see its build.gradle), so declaring it keeps both
+    // modules on one version instead of relying on Gradle conflict resolution.
+    firebaseMessagingVersion = '25.0.1'
+}

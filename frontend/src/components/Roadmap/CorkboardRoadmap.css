@@ -1,0 +1,369 @@
+/* ============================================================
+   CORKBOARD ROADMAP — Photorealistic Visualization Styles
+   ============================================================ */
+
+/* --- I. CORKBOARD BACKGROUND --- */
+.corkboard-canvas {
+  position: relative;
+  width: 100%;
+  height: 80vh;
+  border-radius: 16px;
+  overflow: hidden;
+  background-color: #3a8a8c;
+  background-image:
+    repeating-conic-gradient(rgba(255, 255, 255, 0.03) 0% 25%, transparent 0% 50%),
+    repeating-linear-gradient(135deg, rgba(0,0,0,0.02) 0px, rgba(0,0,0,0.02) 1px, transparent 1px, transparent 3px),
+    radial-gradient(ellipse at 30% 40%, rgba(255,255,255,0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 60%, rgba(0,0,0,0.08) 0%, transparent 50%);
+  background-size: 4px 4px, 3px 3px, 100% 100%, 100% 100%;
+  box-shadow: inset 0 0 80px rgba(0,0,0,0.5), inset 0 0 200px rgba(0,0,0,0.15), 0 8px 32px rgba(0,0,0,0.6);
+  border: 4px solid #1e2a2b;
+}
+
+.corkboard-canvas::after {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(0,0,0,0.3) 100%);
+  pointer-events: none; z-index: 1;
+}
+.corkboard-canvas .react-flow { z-index: 2; }
+
+/* --- II. HEADER --- */
+.corkboard-header {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 28px;
+  background: linear-gradient(180deg, #1a1f2e, #161b28);
+  border-bottom: 1px solid rgba(0,242,234,0.15);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5); pointer-events: auto; gap: 16px;
+}
+.corkboard-brand { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.corkboard-brand-icon { width: 32px; height: 32px; color: #00f2ea; filter: drop-shadow(0 0 6px rgba(0,242,234,0.5)); }
+.corkboard-brand-text { font-family: 'Inter','Outfit',sans-serif; font-size: 18px; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
+.corkboard-metrics { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.corkboard-metrics-title { font-family: 'Inter',sans-serif; font-size: 9px; font-weight: 800; letter-spacing: 3px; text-transform: uppercase; color: rgba(255,255,255,0.4); }
+.corkboard-metrics-row { display: flex; gap: 12px; }
+.corkboard-metric { display: flex; flex-direction: column; align-items: center; padding: 6px 16px; border-radius: 8px; background: rgba(0,242,234,0.05); border: 1px solid rgba(0,242,234,0.15); box-shadow: inset 0 0 12px rgba(0,242,234,0.08), 0 0 8px rgba(0,242,234,0.1); }
+.corkboard-metric-label { font-family: 'Inter',sans-serif; font-size: 8px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; color: rgba(255,255,255,0.35); margin-bottom: 2px; }
+.corkboard-metric-value { font-family: 'Inter',sans-serif; font-size: 14px; font-weight: 700; color: #00f2ea; text-shadow: 0 0 10px rgba(0,242,234,0.6), 0 0 20px rgba(0,242,234,0.3); }
+.corkboard-controls { display: flex; align-items: center; gap: 20px; flex-shrink: 0; }
+.corkboard-control-labels { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.corkboard-control-label { font-family: 'Inter',sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: rgba(255,255,255,0.45); }
+.corkboard-control-label-active { color: #00e676; text-shadow: 0 0 8px rgba(0,230,118,0.4); }
+.corkboard-toggle { position: relative; width: 56px; height: 28px; border-radius: 14px; cursor: pointer; border: none; background: linear-gradient(180deg, #2a2e3a, #1a1e28, #0f1218); box-shadow: inset 0 1px 3px rgba(0,0,0,0.5), inset 0 -1px 2px rgba(255,255,255,0.05), 0 2px 8px rgba(0,0,0,0.4); transition: all 0.3s ease; }
+.corkboard-toggle-handle { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(135deg, #4a4e5a, #2a2e38, #3a3e48); box-shadow: 0 2px 6px rgba(0,0,0,0.5), inset 0 1px 2px rgba(255,255,255,0.1); transition: transform 0.3s cubic-bezier(0.68,-0.55,0.27,1.55); display: flex; align-items: center; justify-content: center; }
+.corkboard-toggle-handle svg { width: 12px; height: 12px; color: rgba(255,255,255,0.4); }
+.corkboard-toggle.active .corkboard-toggle-handle { transform: translateX(28px); }
+.corkboard-led { width: 6px; height: 6px; border-radius: 50%; background: #1a1e28; margin-left: 6px; transition: all 0.3s ease; }
+.corkboard-led.on { background: #00e676; box-shadow: 0 0 6px #00e676, 0 0 12px rgba(0,230,118,0.5), 0 0 20px rgba(0,230,118,0.2); }
+.corkboard-saving { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 20px; background: rgba(0,242,234,0.08); border: 1px solid rgba(0,242,234,0.15); }
+.corkboard-saving-icon { width: 12px; height: 12px; color: #00f2ea; animation: saving-pulse 1.5s ease-in-out infinite; }
+.corkboard-saving-text { font-family: 'Inter',sans-serif; font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.4); }
+@keyframes saving-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+/* === III. 3D PAPER NODES with REAL PAPER IMAGE === */
+.paper-node-wrapper {
+  position: relative;
+  transform: perspective(800px) rotateX(2deg) rotateY(-1deg);
+  transform-style: preserve-3d;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  box-shadow:
+    2px 4px 8px rgba(0,0,0,0.4),
+    5px 10px 20px rgba(0,0,0,0.3),
+    8px 16px 35px rgba(0,0,0,0.2),
+    -1px -1px 0 rgba(255,255,255,0.06);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.paper-node-wrapper:hover {
+  transform: perspective(800px) rotateX(3deg) rotateY(-2deg) translateY(-8px) scale(1.03);
+  box-shadow:
+    3px 6px 12px rgba(0,0,0,0.45),
+    8px 16px 30px rgba(0,0,0,0.35),
+    12px 24px 50px rgba(0,0,0,0.25),
+    -1px -1px 0 rgba(255,255,255,0.08);
+}
+
+.paper-node {
+  position: relative;
+  min-width: 200px;
+  max-width: 260px;
+  padding: 24px 20px 16px;
+  border-radius: 4px;
+  overflow: hidden;
+  /* Real paper texture image as background */
+  background: url('/paper-texture.png') center/cover no-repeat;
+  /* Inner shadow for depth/curl feel */
+  box-shadow:
+    inset 0 2px 6px rgba(0,0,0,0.08),
+    inset 0 -2px 4px rgba(0,0,0,0.04),
+    inset 3px 0 6px rgba(0,0,0,0.04),
+    inset -3px 0 6px rgba(0,0,0,0.04);
+}
+
+/* Brass map pin */
+.paper-node::before {
+  content: ''; position: absolute; top: -7px; left: 50%; transform: translateX(-50%);
+  width: 18px; height: 18px; border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #ffe066, #ffd700, #daa520, #b8860b, #6b4c0a);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.55), 0 1px 3px rgba(0,0,0,0.3), inset 0 2px 4px rgba(255,255,255,0.4), inset 0 -1px 3px rgba(0,0,0,0.25);
+  z-index: 10;
+}
+/* Pin hole dimple */
+.paper-node::after {
+  content: ''; position: absolute; top: 5px; left: 50%; transform: translateX(-50%);
+  width: 4px; height: 4px; border-radius: 50%;
+  background: rgba(0,0,0,0.12); box-shadow: 0 0 3px rgba(0,0,0,0.08); z-index: 9;
+}
+
+/* Dog-ear fold */
+.paper-node-fold {
+  position: absolute; bottom: 0; right: 0; width: 18px; height: 18px;
+  background: linear-gradient(135deg, transparent 50%, #d8d0b8 50%, #c8c0a8 100%);
+  box-shadow: -2px -2px 4px rgba(0,0,0,0.06);
+}
+
+/* === BLUE PEN INK TEXT === */
+.paper-node-category {
+  font-family: 'Inter',sans-serif; font-size: 7px; font-weight: 800;
+  letter-spacing: 2.5px; text-transform: uppercase;
+  color: rgba(80,90,100,0.45); margin-bottom: 4px;
+}
+.paper-node-title {
+  font-family: 'Caveat', cursive;
+  font-size: 19px; font-weight: 700;
+  color: #1a3a6b; /* Blue pen ink */
+  line-height: 1.2; margin-bottom: 6px;
+  letter-spacing: 0.3px;
+  text-shadow: 0 0 0.5px rgba(26,58,107,0.3);
+}
+.paper-node-detail {
+  font-family: 'Caveat', cursive;
+  font-size: 14px; font-weight: 500;
+  color: rgba(26,58,107,0.55); /* Lighter blue pen */
+  line-height: 1.3;
+  text-shadow: 0 0 0.3px rgba(26,58,107,0.2);
+}
+
+/* === ACTIVE — YELLOW HIGHLIGHTER === */
+.paper-node-active-wrapper .paper-node-title {
+  position: relative; display: inline-block;
+}
+.paper-node-active-wrapper .paper-node-title::before {
+  content: ''; position: absolute; left: -4px; right: -6px; top: 40%; bottom: 10%;
+  background: rgba(255, 235, 59, 0.5); /* Yellow highlighter */
+  transform: rotate(-1.5deg); z-index: -1;
+  border-radius: 4px; filter: blur(0.5px); mix-blend-mode: multiply;
+}
+
+/* === COMPLETED — PEN STRIKETHROUGH === */
+.paper-node-completed-wrapper .paper-node-title {
+  position: relative; color: rgba(26,58,107,0.35);
+}
+.paper-node-completed-wrapper .paper-node-title::after {
+  content: ''; position: absolute; left: -4px; right: -4px; top: 50%;
+  height: 2.5px;
+  background: linear-gradient(90deg, transparent 0%, #1a3a6b 3%, #1a3a6b 97%, transparent 100%);
+  transform: rotate(-1.5deg) translateY(-1px); opacity: 0.5; border-radius: 2px;
+}
+.paper-node-completed-wrapper .paper-node-detail { color: rgba(26,58,107,0.25); text-decoration: line-through; text-decoration-color: rgba(26,58,107,0.3); }
+.paper-node-completed-wrapper .paper-node-category { color: rgba(80,90,100,0.2); }
+.paper-node-checkmark {
+  position: absolute; top: 6px; right: 8px;
+  font-family: 'Caveat',cursive; font-size: 26px; font-weight: 700;
+  color: #1a6b3a; transform: rotate(-8deg);
+  text-shadow: 0 0 1px rgba(26,107,58,0.4); opacity: 0.8; z-index: 5;
+}
+
+/* FAILED/REVISION */
+.paper-node-failed-wrapper {
+  box-shadow: 2px 4px 8px rgba(0,0,0,0.4), 5px 10px 20px rgba(0,0,0,0.3), 0 0 14px rgba(255,80,80,0.2);
+}
+/* === REVISION REQUIRED — SKETCHY RED CIRCLE === */
+.paper-node-failed-wrapper .paper-node-title { 
+  position: relative; display: inline-block; color: #8b1a1a; 
+}
+.paper-node-failed-wrapper .paper-node-title::after {
+  content: ''; position: absolute; top: -8px; left: -12px; right: -8px; bottom: -6px;
+  border: 2px solid rgba(192, 57, 43, 0.5);
+  border-radius: 60% 40% 50% 50% / 40% 50% 60% 40%;
+  transform: rotate(-4deg); pointer-events: none; z-index: 5;
+}
+.paper-node-failed-wrapper .paper-node-detail { color: rgba(139,26,26,0.6); }
+.paper-node-revision-mark {
+  position: absolute; top: 4px; right: 6px;
+  font-family: 'Caveat',cursive; font-size: 22px; font-weight: 700;
+  color: #c0392b; transform: rotate(5deg);
+  text-shadow: 0 0 1px rgba(192,57,43,0.5); z-index: 5;
+}
+
+/* ACTIVE glow */
+.paper-node-active-wrapper {
+  box-shadow: 2px 4px 8px rgba(0,0,0,0.4), 5px 10px 20px rgba(0,0,0,0.3), 0 0 22px rgba(0,242,234,0.45), 0 0 45px rgba(0,242,234,0.15);
+}
+.paper-node-completed-wrapper {
+  box-shadow: 2px 4px 8px rgba(0,0,0,0.4), 5px 10px 20px rgba(0,0,0,0.3), 0 0 18px rgba(0,230,118,0.25), 0 0 35px rgba(0,230,118,0.1);
+}
+
+/* Stars */
+.paper-node-stars { display: flex; gap: 2px; margin-top: 6px; }
+.paper-node-stars svg { width: 10px; height: 10px; }
+.paper-node-star-filled { color: #b8860b; }
+.paper-node-star-empty { color: rgba(40,50,50,0.1); }
+
+/* Handles / Grommets — visible only in edit mode via wrapper class */
+.react-flow__handle {
+  width: 22px !important;
+  height: 22px !important;
+  background: radial-gradient(circle at 30% 30%, #ffd700, #daa520, #886611) !important;
+  border: 2px solid rgba(0,0,0,0.4) !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5), inset 0 1px 2px rgba(255,255,255,0.4) !important;
+  z-index: 9999 !important;
+  transition: opacity 0.2s ease, transform 0.2s ease, filter 0.2s ease !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  cursor: crosshair !important;
+}
+/* When wrapper has the edit-mode class, make handles fully interactive */
+.paper-node-wrapper--editing .react-flow__handle {
+  opacity: 1 !important;
+  pointer-events: all !important;
+}
+.react-flow__handle:hover {
+  transform: scale(1.25) !important;
+  filter: brightness(1.3) drop-shadow(0 0 14px rgba(0, 242, 234, 0.9)) !important;
+  background: radial-gradient(circle at 30% 30%, #00f2ea, #00c4bd) !important;
+}
+
+/* Top/Bottom/Left/Right handle positions — relative to paper-node-wrapper */
+.paper-node-grommet-top    { top: -11px !important;  left: 50% !important; transform: translateX(-50%) !important; }
+.paper-node-grommet-bottom { bottom: -11px !important; left: 50% !important; transform: translateX(-50%) !important; }
+.paper-node-grommet-left   { left: -11px !important;  top: 50% !important; transform: translateY(-50%) !important; }
+.paper-node-grommet-right  { right: -11px !important; top: 50% !important; transform: translateY(-50%) !important; }
+
+/* Don't let the default React Flow positioning override our custom ones */
+.paper-node-grommet-top.react-flow__handle,
+.paper-node-grommet-bottom.react-flow__handle,
+.paper-node-grommet-left.react-flow__handle,
+.paper-node-grommet-right.react-flow__handle {
+  position: absolute !important;
+}
+
+/* Edge interaction styles */
+.react-flow__edge { cursor: pointer !important; }
+.react-flow__edge:hover .react-flow__edge-path { stroke-width: 3.5 !important; filter: drop-shadow(0 0 6px rgba(255,215,0,0.5)) !important; }
+.react-flow__edge.selected .react-flow__edge-path { stroke: #ff6b6b !important; stroke-width: 3 !important; stroke-dasharray: 6,4 !important; }
+/* Reconnect endpoint drag handle */
+.react-flow__edgeupdater { r: 8 !important; fill: #ffd700 !important; stroke: rgba(0,0,0,0.4) !important; cursor: grab !important; }
+.react-flow__edgeupdater:hover { r: 10 !important; fill: #00f2ea !important; filter: drop-shadow(0 0 8px rgba(0,242,234,0.8)) !important; }
+
+.paper-node-drag-handle { position: absolute; left: 6px; top: 20px; color: rgba(40,50,50,0.2); cursor: grab; }
+.paper-node-drag-handle:active { cursor: grabbing; }
+
+/* Edit mode border indicator */
+.paper-node-editing { outline: 1px dashed rgba(26,58,107,0.2); outline-offset: 2px; }
+
+/* Delete button on node */
+.paper-node-delete-btn {
+  position: absolute; top: -4px; right: -4px; z-index: 20;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #c0392b; border: 2px solid #f7f2e4; color: white;
+  font-size: 11px; font-weight: 900; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  transition: all 0.15s ease; opacity: 0;
+}
+.paper-node-wrapper:hover .paper-node-delete-btn { opacity: 1; }
+.paper-node-delete-btn:hover { background: #e74c3c; transform: scale(1.2); }
+
+/* --- IV. TWINE CONNECTIONS --- */
+.react-flow .react-flow__edge-path { stroke: #8B6914 !important; stroke-width: 2.5 !important; stroke-linecap: round !important; }
+.react-flow .react-flow__edge.animated .react-flow__edge-path { stroke: #00f2ea !important; stroke-width: 2 !important; filter: drop-shadow(0 0 6px rgba(0,242,234,0.5)) !important; }
+.react-flow .react-flow__edge.selected .react-flow__edge-path { stroke: #ff6b6b !important; stroke-width: 3 !important; stroke-dasharray: 6,4 !important; }
+
+/* --- V. PLAQUE --- */
+.architect-plaque { position: absolute; bottom: 24px; right: 24px; z-index: 50; padding: 12px 24px; background: linear-gradient(135deg, rgba(20,30,40,0.85), rgba(30,40,55,0.9), rgba(20,25,35,0.85)); border: 1px solid rgba(0,242,234,0.3); border-radius: 8px; box-shadow: 0 0 15px rgba(0,242,234,0.2), 0 0 30px rgba(0,242,234,0.08), inset 0 0 15px rgba(0,242,234,0.05), 0 4px 12px rgba(0,0,0,0.5); backdrop-filter: blur(8px); cursor: pointer; transition: all 0.3s ease; }
+.architect-plaque:hover { border-color: rgba(0,242,234,0.6); transform: translateY(-2px); }
+.architect-plaque-text { font-family: 'Inter',sans-serif; font-size: 10px; font-weight: 800; letter-spacing: 3px; text-transform: uppercase; color: #00f2ea; text-shadow: 0 0 8px rgba(0,242,234,0.5); }
+
+/* --- VI. REACTFLOW OVERRIDES --- */
+.corkboard-canvas .react-flow__background { opacity: 0 !important; }
+.corkboard-canvas .react-flow__controls { background: rgba(26,31,46,0.9) !important; border: 1px solid rgba(0,242,234,0.2) !important; border-radius: 10px !important; box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important; bottom: 24px !important; left: 24px !important; }
+.corkboard-canvas .react-flow__controls-button { background: transparent !important; border-bottom: 1px solid rgba(255,255,255,0.05) !important; fill: rgba(255,255,255,0.6) !important; }
+.corkboard-canvas .react-flow__controls-button:hover { background: rgba(0,242,234,0.1) !important; fill: #00f2ea !important; }
+
+/* --- VII. ADD NODE BUTTON (floating in edit mode) --- */
+.add-node-btn {
+  position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50;
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 24px; border-radius: 12px;
+  font-family: 'Inter',sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  background: rgba(0,242,234,0.1); border: 1px solid rgba(0,242,234,0.3); color: #00f2ea;
+  cursor: pointer; transition: all 0.2s ease;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.add-node-btn:hover { background: rgba(0,242,234,0.18); box-shadow: 0 0 15px rgba(0,242,234,0.2), 0 4px 16px rgba(0,0,0,0.3); }
+
+/* --- VIII. EDIT MODAL (paper-styled) --- */
+.edit-modal-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.7); backdrop-filter: blur(6px);
+}
+.edit-modal {
+  background: url('/paper-texture.png') center/cover no-repeat;
+  border-radius: 8px; padding: 30px 26px; max-width: 420px; width: 90%;
+  box-shadow: 6px 12px 35px rgba(0,0,0,0.5), 0 0 60px rgba(0,0,0,0.2); position: relative;
+}
+.edit-modal::before {
+  content: ''; position: absolute; top: -7px; left: 50%; transform: translateX(-50%);
+  width: 18px; height: 18px; border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #ffe066, #ffd700, #daa520, #b8860b);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.5), inset 0 2px 4px rgba(255,255,255,0.4);
+}
+.edit-modal h3 { font-family: 'Caveat',cursive; font-size: 24px; font-weight: 700; color: #1a3a6b; margin-bottom: 16px; padding-top: 6px; }
+.edit-modal label { font-family: 'Inter',sans-serif; font-size: 8px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; color: rgba(40,50,50,0.4); display: block; margin-bottom: 4px; margin-top: 14px; }
+.edit-modal input, .edit-modal textarea { font-family: 'Caveat',cursive; width: 100%; background: transparent; border: none; border-bottom: 2px solid rgba(26,58,107,0.2); outline: none; padding: 6px 0; color: #1a3a6b; caret-color: #1a3a6b; }
+.edit-modal input { font-size: 18px; font-weight: 700; }
+.edit-modal textarea { font-size: 14px; font-weight: 500; resize: none; min-height: 50px; }
+.edit-modal input:focus, .edit-modal textarea:focus { border-bottom-color: rgba(26,58,107,0.5); }
+.edit-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.edit-modal-btn { font-family: 'Inter',sans-serif; font-size: 11px; font-weight: 700; padding: 8px 18px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; transition: all 0.2s ease; }
+.edit-modal-btn-cancel { background: rgba(40,50,50,0.08); color: rgba(40,50,50,0.6); border-color: rgba(40,50,50,0.15); }
+.edit-modal-btn-cancel:hover { background: rgba(40,50,50,0.12); }
+.edit-modal-btn-save { background: #1a3a6b; color: #f7f2e4; }
+.edit-modal-btn-save:hover { background: #2a4a7b; }
+.edit-modal-btn-delete { background: #c0392b; color: white; }
+.edit-modal-btn-delete:hover { background: #e74c3c; }
+
+/* --- IX. CONFIRM POPUP (architecture mode) --- */
+.confirm-popup-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+}
+.confirm-popup {
+  background: linear-gradient(135deg, #0f1219, #141820, #0f1219);
+  border: 1px solid rgba(0,242,234,0.25); border-radius: 16px;
+  padding: 28px; max-width: 400px; width: 90%; text-align: center;
+  box-shadow: 0 0 25px rgba(0,242,234,0.1), 0 16px 50px rgba(0,0,0,0.5);
+}
+.confirm-popup h3 { font-family: 'Caveat',cursive; font-size: 26px; font-weight: 700; color: #00f2ea; margin-bottom: 8px; }
+.confirm-popup p { font-family: 'Inter',sans-serif; font-size: 13px; color: rgba(255,255,255,0.55); margin-bottom: 20px; line-height: 1.5; }
+.confirm-popup-actions { display: flex; gap: 10px; justify-content: center; }
+.confirm-popup-btn { font-family: 'Inter',sans-serif; font-size: 12px; font-weight: 700; padding: 10px 24px; border-radius: 10px; cursor: pointer; transition: all 0.2s ease; border: 1px solid transparent; }
+.confirm-popup-btn-yes { background: rgba(0,242,234,0.12); border-color: rgba(0,242,234,0.35); color: #00f2ea; }
+.confirm-popup-btn-yes:hover { background: rgba(0,242,234,0.2); box-shadow: 0 0 12px rgba(0,242,234,0.15); }
+.confirm-popup-btn-no { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.1); color: rgba(255,255,255,0.5); }
+.confirm-popup-btn-no:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); }
+
+/* --- X. FAILURE MODAL --- */
+.failure-modal-overlay { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.75); backdrop-filter: blur(6px); }
+.failure-modal { background: linear-gradient(135deg, #0f1219, #141820, #0f1219); border: 1px solid rgba(255,107,107,0.25); border-radius: 20px; padding: 32px; max-width: 440px; width: 90%; box-shadow: 0 0 30px rgba(255,107,107,0.1), 0 20px 60px rgba(0,0,0,0.5); }
+.failure-modal h3 { font-family: 'Caveat',cursive; font-size: 28px; font-weight: 700; color: #ff6b6b; margin-bottom: 8px; }
+.failure-modal p { font-family: 'Inter',sans-serif; font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 24px; line-height: 1.6; }
+.failure-modal-actions { display: flex; flex-direction: column; gap: 10px; }
+.failure-modal-btn { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 14px 20px; border-radius: 12px; font-family: 'Inter',sans-serif; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; border: 1px solid transparent; }
+.failure-modal-btn-retry { background: rgba(0,242,234,0.1); border-color: rgba(0,242,234,0.3); color: #00f2ea; }
+.failure-modal-btn-retry:hover { background: rgba(0,242,234,0.18); box-shadow: 0 0 15px rgba(0,242,234,0.2); }
+.failure-modal-btn-skip { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.1); color: rgba(255,255,255,0.6); }
+.failure-modal-btn-skip:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.8); }
+.failure-modal-btn-skip .skip-sublabel { font-size: 9px; opacity: 0.5; font-weight: 500; }

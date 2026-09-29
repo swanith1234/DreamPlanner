@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">IgniteMate</string>
+    <string name="title_activity_main">IgniteMate</string>
+    <string name="package_name">com.ignitemate.app</string>
+    <string name="custom_url_scheme">com.ignitemate.app</string>
+</resources>

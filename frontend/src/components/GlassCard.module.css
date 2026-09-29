@@ -1,0 +1,23 @@
+.card {
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+.chat {
+    border-radius: var(--radius-lg);
+    border-bottom-left-radius: 4px;
+    /* Default chat bubble style */
+}
+
+.chat.user {
+    border-bottom-left-radius: var(--radius-lg);
+    border-bottom-right-radius: 4px;
+    background: rgba(0, 242, 234, 0.1);
+    border-color: rgba(0, 242, 234, 0.3);
+}
